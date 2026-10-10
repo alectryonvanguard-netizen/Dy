@@ -8,18 +8,19 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.label import Label
 from kivy.uix.button import Button
-from kivy.uix.progressbar import ProgressBar
-from kivy.uix.image import Image
-from kivy.uix.video import Video
-from kivy.uix.widget import Widget
+from kivy.uix.textinput import TextInput
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.popup import Popup
 from kivy.uix.modalview import ModalView
 from kivy.uix.gridlayout import GridLayout
-from kivy.uix.textinput import TextInput
+from kivy.uix.image import Image
+from kivy.uix.video import Video
+from kivy.uix.progressbar import ProgressBar
+from kivy.uix.widget import Widget
 from kivy.utils import get_color_from_hex
 import os
 import json
+import random
 
 try:
     from jnius import autoclass
@@ -36,13 +37,40 @@ CYAN = "#00F5E9"
 PINK = "#FF286F"
 WHITE = "#FFFFFF"
 GREY = "#92929D"
+DARK = "#0b0d12"
 
 VIDEO_EXTENSIONS = (".mp4", ".mkv", ".mov", ".avi", ".webm", ".3gp", ".m4v")
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
 
+APP_STATE_FILE = "samng_state.json"
+
 
 def rgba(value):
     return get_color_from_hex(value)
+
+
+class DataStore:
+    def __init__(self, app):
+        self.app = app
+        self.path = os.path.join(app.user_data_dir, APP_STATE_FILE)
+
+    def load(self):
+        try:
+            if os.path.exists(self.path):
+                with open(self.path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return {
+            "logged_in": False,
+            "current_user": "",
+            "users": {},
+            "posts": []
+        }
+
+    def save(self, state):
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
 
 
 class NeonSpinner(Widget):
@@ -62,331 +90,314 @@ class NeonSpinner(Widget):
             Color(*rgba(CYAN))
             self.canvas.add(
                 Line(
-                    circle=(
-                        self.center_x, self.center_y,
-                        min(self.width, self.height) * 0.35,
-                        self.angle, self.angle + 255
-                    ),
+                    circle=(self.center_x, self.center_y,
+                            min(self.width, self.height) * 0.35,
+                            self.angle, self.angle + 255),
                     width=dp(3)
                 )
             )
             Color(*rgba(PINK))
             self.canvas.add(
                 Line(
-                    circle=(
-                        self.center_x, self.center_y,
-                        min(self.width, self.height) * 0.23,
-                        -self.angle, -self.angle + 95
-                    ),
+                    circle=(self.center_x, self.center_y,
+                            min(self.width, self.height) * 0.23,
+                            -self.angle, -self.angle + 95),
                     width=dp(2)
                 )
             )
 
 
-class WelcomeScreen(Screen):
+class LoginScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        layout = FloatLayout()
-        self.add_widget(layout)
+        root = FloatLayout()
+        self.add_widget(root)
 
-        with layout.canvas.before:
+        with root.canvas.before:
             Color(*rgba(BG))
-            self.bg_rect = Rectangle(pos=layout.pos, size=layout.size)
-        layout.bind(
-            pos=lambda obj, value: setattr(self.bg_rect, "pos", value),
-            size=lambda obj, value: setattr(self.bg_rect, "size", value)
-        )
+            bg = Rectangle(pos=root.pos, size=root.size)
+        root.bind(pos=lambda w, v: setattr(bg, "pos", v),
+                  size=lambda w, v: setattr(bg, "size", v))
 
-        top = BoxLayout(size_hint_y=None, height=dp(58), pos_hint={"top": 1})
-        top.add_widget(Label(text="8:44", color=rgba(WHITE), font_size="18sp", bold=True, halign="left"))
-        top.add_widget(Label(text="", size_hint_x=1))
-        top.add_widget(Label(text="55", color=rgba(WHITE), font_size="18sp", bold=True, halign="right"))
-        layout.add_widget(top)
+        title = Label(text="SAM NG", color=rgba(CYAN), font_size="28sp", bold=True)
+        title.pos_hint = {"center_x": 0.5, "center_y": 0.83}
+        root.add_widget(title)
 
-        tabs = BoxLayout(size_hint=(1, None), height=dp(60), pos_hint={"top": 0.92})
-        tabs.add_widget(Label(text="STEM", color=rgba(WHITE), bold=True, font_size="18sp"))
-        tabs.add_widget(Label(text="Following", color=rgba(WHITE), bold=True, font_size="18sp"))
-        tabs.add_widget(Label(text="For You", color=rgba(CYAN), bold=True, font_size="18sp"))
-        layout.add_widget(tabs)
+        box = BoxLayout(orientation="vertical", size_hint=(0.8, None), height=dp(230), pos_hint={"center_x": 0.5, "center_y": 0.50})
+        box.spacing = dp(12)
 
-        plus = Button(
-            text="+",
-            size_hint=(None, None),
-            size=(dp(50), dp(50)),
-            pos_hint={"right": 1, "top": 0.87},
+        self.username = TextInput(hint_text="Username", multiline=False, write_tab=False)
+        self.password = TextInput(hint_text="Password", multiline=False, password=True, write_tab=False)
+
+        for field in (self.username, self.password):
+            field.background_color = rgba(PANEL)
+            field.foreground_color = rgba(WHITE)
+            field.hint_text_color = rgba(GREY)
+            field.cursor_color = rgba(CYAN)
+            field.padding = [dp(16), dp(12), dp(16), dp(12)]
+            field.size_hint_y = None
+            field.height = dp(52)
+            box.add_widget(field)
+
+        btn = Button(
+            text="Login",
             background_normal="",
-            background_color=rgba(BG),
-            color=rgba(CYAN),
-            font_size="34sp"
-        )
-        plus.bind(on_release=lambda *_: self.manager.current = "home")
-        layout.add_widget(plus)
-
-        hero = BoxLayout(size_hint=(1, None), height=dp(200), pos_hint={"top": 0.75})
-        hero.add_widget(Label(
-            text="DREAM\nBUILD\nGROW",
-            color=rgba(WHITE), font_size="26sp", bold=True, halign="left",
-            valign="middle", text_size=(dp(150), dp(200))
-        ))
-        layout.add_widget(hero)
-
-        title = Label(
-            text="SAM NG DVSG SG",
-            color=rgba(CYAN), bold=True, font_size="26sp",
-            pos_hint={"center_x": 0.5, "center_y": 0.58}
-        )
-        layout.add_widget(title)
-
-        headline = Label(
-            text="S íś fôř ýöü.",
-            color=rgba(WHITE), bold=True, font_size="42sp",
-            pos_hint={"center_x": 0.5, "center_y": 0.48}
-        )
-        layout.add_widget(headline)
-
-        info1 = Label(
-            text="Your feed starts here",
-            color=rgba(WHITE), font_size="28sp",
-            pos_hint={"center_x": 0.5, "center_y": 0.36}
-        )
-        layout.add_widget(info1)
-
-        info2 = Label(
-            text="Tap Create to add a photo or video.",
-            color=rgba(GREY), font_size="18sp",
-            pos_hint={"center_x": 0.5, "center_y": 0.30}
-        )
-        layout.add_widget(info2)
-
-        create_btn = Button(
-            text="+ Create a post",
-            size_hint=(None, None),
-            size=(dp(260), dp(90)),
-            pos_hint={"center_x": 0.5, "center_y": 0.18},
-            background_normal="",
-            background_color=rgba(BG),
-            color=rgba(CYAN),
+            background_color=rgba(CYAN),
+            color=rgba(BG),
             bold=True,
-            font_size="22sp"
+            font_size="18sp",
+            size_hint_y=None,
+            height=dp(56)
         )
-        create_btn.bind(on_release=lambda *_: self.manager.current = "home")
-        layout.add_widget(create_btn)
+        btn.bind(on_release=self.login)
+        box.add_widget(btn)
 
-        bottom = BoxLayout(
-            size_hint=(1, None), height=dp(90),
-            pos_hint={"x": 0, "y": 0},
-            spacing=dp(10), padding=(dp(12), dp(8))
-        )
-        for name in ("Home", "Friends", "Create", "Inbox", "Profile"):
-            btn = Button(
-                text=name,
-                background_normal="",
-                background_color=rgba(BG),
-                color=rgba(CYAN if name == "Home" else WHITE),
-                font_size="18sp",
-                bold=True
-            )
-            btn.bind(on_release=lambda *_: self.manager.current = "home")
-            bottom.add_widget(btn)
-        layout.add_widget(bottom)
+        root.add_widget(box)
+
+    def login(self, *args):
+        username = self.username.text.strip()
+        password = self.password.text.strip()
+        if not username or not password:
+            self.show_message("Please enter username and password")
+            return
+
+        state = self.manager.app.state
+        if username not in state["users"]:
+            state["users"][username] = {
+                "password": password,
+                "name": username,
+                "bio": "Welcome to Sam Ng",
+                "avatar": "",
+                "banner": "",
+                "likes": 0,
+                "followers": 0,
+                "following": 0
+            }
+        state["current_user"] = username
+        state["logged_in"] = True
+        self.manager.app.save_state()
+        self.manager.current = "home"
+
+    def show_message(self, message):
+        popup = Popup(title="Login", content=Label(text=message, color=rgba(WHITE)), size_hint=(0.7, 0.25))
+        popup.open()
 
 
 class HomeScreen(Screen):
-    PICKER_REQUEST_CODE = 2468
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.selected_path = None
+        self.search_text = ""
         self.posts = []
-        self.active_tab = "For You"
         self.recommendations = [
-            {"title": "Creator spotlight", "kind": "similar"},
-            {"title": "Trending nearby", "kind": "similar"}
+            {"author": "Ari", "tag": "travel"},
+            {"author": "Nia", "tag": "music"},
+            {"author": "Jules", "tag": "nature"},
+            {"author": "Kian", "tag": "video"}
         ]
-        self.picker_popup = None
-        self.is_liked = False
-        self.is_saved = False
-        self.comments = []
-        self.dark_mode = True
 
-        if ANDROID_PICKER_AVAILABLE:
-            try:
-                activity.bind(on_activity_result=self.on_android_activity_result)
-            except Exception:
-                pass
+        self.build_ui()
 
-        outer = BoxLayout(orientation="vertical")
-        self.add_widget(outer)
+    def build_ui(self):
+        root = FloatLayout()
+        self.add_widget(root)
 
-        with outer.canvas.before:
+        with root.canvas.before:
             Color(*rgba(BG))
-            self.bg_rect = Rectangle(pos=outer.pos, size=outer.size)
-        outer.bind(
-            pos=lambda obj, value: setattr(self.bg_rect, "pos", value),
-            size=lambda obj, value: setattr(self.bg_rect, "size", value)
+            bg = Rectangle(pos=root.pos, size=root.size)
+        root.bind(pos=lambda w, v: setattr(bg, "pos", v),
+                  size=lambda w, v: setattr(bg, "size", v))
+
+        # top search + profile avatar
+        top = BoxLayout(size_hint=(1, None), height=dp(58), pos_hint={"top": 1}, padding=(dp(16), dp(4)), spacing=dp(12))
+        self.search = TextInput(hint_text="Search", multiline=False, write_tab=False)
+        self.search.background_color = rgba(PANEL)
+        self.search.foreground_color = rgba(WHITE)
+        self.search.hint_text_color = rgba(GREY)
+        self.search.cursor_color = rgba(CYAN)
+        self.search.size_hint_x = 0.75
+        self.search.bind(text=self.on_search)
+        top.add_widget(self.search)
+
+        avatar_btn = Button(
+            text="S",
+            background_normal="",
+            background_color=rgba(CYAN),
+            color=rgba(BG),
+            bold=True,
+            font_size="22sp",
+            size_hint_x=None,
+            width=dp(46),
+            height=dp(46)
         )
+        avatar_btn.bind(on_release=lambda *_: self.manager.current = "profile")
+        top.add_widget(avatar_btn)
+        root.add_widget(top)
 
-        top = BoxLayout(size_hint_y=None, height=dp(58), spacing=dp(20), padding=(dp(16), dp(8)))
-        self.top_bar = top
-        outer.add_widget(top)
+        # feed area
+        self.feed_container = BoxLayout(orientation="vertical", size_hint=(1, None), spacing=dp(12), padding=(dp(10), dp(8)))
+        self.feed_container.bind(minimum_height=self.feed_container.setter("height"))
 
-        for name in ("STEM", "Following", "For You"):
-            button = Button(
-                text=name,
-                background_normal="",
-                background_color=rgba(BG),
-                color=rgba(WHITE if name == "For You" else GREY),
-                font_size="18sp",
-                bold=True
-            )
-            button.bind(on_release=lambda btn, n=name: self.change_tab(n))
-            top.add_widget(button)
+        scroll = ScrollView(do_scroll_x=False, size_hint=(1, 0.78), pos_hint={"top": 0.88})
+        scroll.add_widget(self.feed_container)
+        root.add_widget(scroll)
 
-        create_btn = Button(
-            text="+", size_hint_x=None, width=dp(52),
-            background_normal="", background_color=rgba(BG),
-            color=rgba(CYAN), font_size="30sp", bold=True
-        )
-        create_btn.bind(on_release=lambda *_: self.pick_media())
-        top.add_widget(create_btn)
+        # plus nav
+        nav = BoxLayout(size_hint=(1, None), height=dp(80), pos_hint={"x": 0, "y": 0})
+        nav.padding = (dp(10), dp(10))
+        nav.spacing = dp(8)
 
-        self.feed = BoxLayout(orientation="vertical", padding=(dp(14), dp(8)))
-        outer.add_widget(self.feed)
-
-        bottom = BoxLayout(
-            size_hint_y=None, height=dp(90),
-            spacing=dp(10), padding=(dp(12), dp(6))
-        )
-        for name in ("Home", "Friends", "Create", "Inbox", "Profile"):
+        for name, color in [("Home", CYAN), ("Friends", WHITE), ("Create", CYAN), ("Inbox", WHITE), ("Profile", WHITE)]:
             btn = Button(
-                text=name,
+                text=name if name != "Create" else "",
                 background_normal="",
                 background_color=rgba(BG),
-                color=rgba(CYAN if name == "Home" else WHITE),
+                color=rgba(color),
                 font_size="16sp",
                 bold=True,
-                border=(0, 0, 0, 0)
+                size_hint_x=1
             )
-            btn.bind(on_release=lambda *_: self.navigate(name))
-            bottom.add_widget(btn)
-        outer.add_widget(bottom)
+            if name == "Create":
+                btn.text = "+"
+                btn.font_size = "30sp"
+                btn.background_color = rgba(BG)
+                btn.color = rgba(CYAN)
+                btn.border = (0, 0, 0, 0)
+            btn.bind(on_release=lambda *_ , n=name: self.on_nav(n))
+            nav.add_widget(btn)
+        root.add_widget(nav)
 
-        self.show_feed()
+        self.refresh_feed()
 
-    def show_feed(self):
-        self.feed.clear_widgets()
-        banner = BoxLayout(size_hint_y=None, height=dp(120), padding=(dp(14), dp(10)))
-        with banner.canvas.before:
-            Color(*rgba("#0B1E2A"))
-            banner_bg = Rectangle(pos=banner.pos, size=banner.size)
-        banner.bind(pos=lambda w, v: setattr(banner_bg, "pos", v), size=lambda w, v: setattr(banner_bg, "size", v))
-        banner.add_widget(Label(text="SAM NG DVSG SG", color=rgba(CYAN), font_size="24sp", bold=True))
-        self.feed.add_widget(banner)
+    def on_nav(self, name):
+        if name == "Create":
+            self.open_create_menu()
+        elif name == "Profile":
+            self.manager.current = "profile"
+        elif name == "Home":
+            self.refresh_feed()
+        else:
+            self.show_message(f"{name} coming soon")
 
-        self.feed.add_widget(Label(
-            text="S íś fôř ýöü.",
-            color=rgba(WHITE),
-            font_size="38sp",
-            bold=True,
-            size_hint_y=None,
-            height=dp(50)
-        ))
+    def show_message(self, message):
+        popup = Popup(title="Sam Ng", content=Label(text=message, color=rgba(WHITE)), size_hint=(0.7, 0.25))
+        popup.open()
 
-        if not self.posts:
-            empty = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(260), spacing=dp(14), padding=dp(18))
-            empty.add_widget(Label(text="Your feed starts here", color=rgba(WHITE), font_size="26sp"))
-            empty.add_widget(Label(text="Tap Create to add a photo or video.", color=rgba(GREY), font_size="18sp"))
+    def on_search(self, instance, value):
+        self.search_text = value.lower()
+        self.refresh_feed()
+
+    def refresh_feed(self):
+        self.feed_container.clear_widgets()
+        state = self.manager.app.state
+        posts = []
+        for post in state["posts"]:
+            if self.search_text:
+                haystack = f"{post.get('caption','')} {post.get('tags','')} {post.get('author','')}".lower()
+                if self.search_text not in haystack:
+                    continue
+            posts.append(post)
+
+        if not posts:
+            empty_box = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(250), spacing=dp(14), padding=dp(18))
+            empty_box.add_widget(Label(text="Your feed starts here", color=rgba(WHITE), font_size="26sp"))
+            empty_box.add_widget(Label(text="Tap Create to add a photo or video.", color=rgba(GREY), font_size="18sp"))
             create_btn = Button(
                 text="+ Create a post",
-                size_hint=(None, None),
-                size=(dp(260), dp(84)),
                 background_normal="",
                 background_color=rgba(BG),
                 color=rgba(CYAN),
                 font_size="22sp",
-                bold=True
+                bold=True,
+                size_hint=(None, None),
+                size=(dp(260), dp(84))
             )
-            create_btn.bind(on_release=lambda *_: self.pick_media())
-            empty.add_widget(create_btn)
-            self.feed.add_widget(empty)
+            create_btn.bind(on_release=lambda *_: self.open_create_menu())
+            empty_box.add_widget(create_btn)
+            self.feed_container.add_widget(empty_box)
             return
 
-        for post in reversed(self.posts):
-            if os.path.isfile(post):
-                self.feed.add_widget(self.make_post_card(post))
-        self.feed.add_widget(self.make_recommendations_panel())
+        for post in reversed(posts):
+            self.feed_container.add_widget(self.make_post_card(post))
 
-    def make_post_card(self, path):
-        card = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(8), padding=dp(8))
-        header = BoxLayout(size_hint_y=None, height=dp(50))
-        avatar = Button(
-            text="S", size_hint_x=None, width=dp(42), height=dp(42),
-            background_normal="", background_color=rgba(CYAN), color=rgba(BG),
-            bold=True, font_size="20sp"
-        )
+        rec = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(220), spacing=dp(8), padding=dp(10))
+        rec.add_widget(Label(text="Recommended for you", color=rgba(CYAN), font_size="18sp", bold=True))
+        for r in self.recommendations:
+            row = BoxLayout(size_hint_y=None, height=dp(52), spacing=dp(8))
+            avatar = Button(text="C", background_normal="", background_color=rgba(CYAN), color=rgba(BG), size_hint_x=None, width=dp(38))
+            row.add_widget(avatar)
+            row.add_widget(Label(text=f"{r['author']} • {r['tag']}", color=rgba(WHITE), font_size="16sp"))
+            rec.add_widget(row)
+        self.feed_container.add_widget(rec)
+
+    def make_post_card(self, post):
+        card = FloatLayout(size_hint_y=None, height=dp(520), padding=dp(8))
+        with card.canvas.before:
+            Color(*rgba(DARK))
+            rect = Rectangle(pos=card.pos, size=card.size)
+        card.bind(pos=lambda w, v: setattr(rect, "pos", v),
+                  size=lambda w, v: setattr(rect, "size", v))
+
+        header = BoxLayout(size_hint=(1, None), height=dp(42), pos_hint={"x": 0, "top": 1}, padding=(dp(8), 0))
+        avatar = Button(text="S", background_normal="", background_color=rgba(CYAN), color=rgba(BG), size_hint_x=None, width=dp(36))
+        user_name = Label(text=post.get("author", "Sam Ng"), color=rgba(WHITE), bold=True, font_size="18sp")
         header.add_widget(avatar)
-        header.add_widget(Label(text="Sam Ng", color=rgba(WHITE), bold=True, font_size="18sp"))
+        header.add_widget(user_name)
         card.add_widget(header)
 
-        ext = os.path.splitext(path)[1].lower()
-        try:
+        media_area = FloatLayout(size_hint=(1, 0.78), pos_hint={"x": 0, "y": 0.13})
+        media_path = post.get("path")
+        if media_path and os.path.exists(media_path):
+            ext = os.path.splitext(media_path)[1].lower()
             if ext in VIDEO_EXTENSIONS:
-                media = Video(source=path, allow_stretch=True, keep_ratio=True, size_hint_y=None, height=dp(350))
+                video = Video(source=media_path, state="play", options={"eos": "loop"}, allow_stretch=True, keep_ratio=True)
+                video.size_hint = (1, 1)
+                video.pos_hint = {"center_x": 0.5, "center_y": 0.5}
+                media_area.add_widget(video)
             else:
-                media = Image(source=path, allow_stretch=True, keep_ratio=True, size_hint_y=None, height=dp(350))
-            card.add_widget(media)
-        except Exception:
-            card.add_widget(Label(text="Could not load media", color=rgba(PINK)))
+                img = Image(source=media_path, allow_stretch=True, keep_ratio=True)
+                img.size_hint = (1, 1)
+                img.pos_hint = {"center_x": 0.5, "center_y": 0.5}
+                media_area.add_widget(img)
+        else:
+            media_area.add_widget(Label(text="No media", color=rgba(GREY), pos_hint={"center_x": 0.5, "center_y": 0.5}))
+        card.add_widget(media_area)
 
-        action_row = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(6))
-        for text, color in [
-            ("♡ Like", rgba(WHITE)),
-            ("↗ Share", rgba(CYAN)),
-            ("▣ Save", rgba(WHITE)),
-            ("☰ Comment", rgba(WHITE))
-        ]:
-            btn = Button(
-                text=text,
-                background_normal="",
-                background_color=rgba(PANEL),
-                color=color,
-                font_size="12sp"
-            )
-            action_row.add_widget(btn)
-        card.add_widget(action_row)
+        # Right-side vertical action buttons
+        actions = BoxLayout(orientation="vertical", size_hint=(None, None), size=(dp(68), dp(180)), pos_hint={"right": 0.98, "center_y": 0.48}, spacing=dp(8))
+        for label, color in [("♡", PINK), ("💬", WHITE), ("↗", CYAN), ("⋯", GREY)]:
+            btn = Button(text=label, background_normal="", background_color=rgba(PANEL), color=rgba(color), font_size="20sp", size_hint=(None, None), size=(dp(46), dp(42)))
+            actions.add_widget(btn)
+        card.add_widget(actions)
+
+        caption = Label(text=post.get("caption", ""), color=rgba(WHITE), font_size="16sp", halign="left", valign="middle", size_hint=(1, None), height=dp(30), pos_hint={"x": 0.02, "top": 0.12})
+        card.add_widget(caption)
+
         return card
 
-    def make_recommendations_panel(self):
-        panel = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(8), padding=(dp(8), dp(10)))
-        panel.add_widget(Label(text="Recommended for you", color=rgba(CYAN), bold=True, font_size="18sp"))
-        for item in self.recommendations:
-            row = BoxLayout(size_hint_y=None, height=dp(60), spacing=dp(8))
-            avatar = Button(text="C", size_hint_x=None, width=dp(42), background_normal="", background_color=rgba(CYAN), color=rgba(BG))
-            row.add_widget(avatar)
-            row.add_widget(Label(text=item["title"], color=rgba(WHITE), font_size="16sp"))
-            panel.add_widget(row)
-        return panel
+    def open_create_menu(self):
+        popup = ModalView(size_hint=(0.9, 0.5), auto_dismiss=True)
+        panel = BoxLayout(orientation="vertical", padding=dp(20), spacing=dp(12))
+        with panel.canvas.before:
+            Color(*rgba(PANEL))
+            rect = Rectangle(pos=panel.pos, size=panel.size)
+        panel.bind(pos=lambda w, v: setattr(rect, "pos", v),
+                   size=lambda w, v: setattr(rect, "size", v))
 
-    def change_tab(self, name):
-        self.active_tab = name
-        self.show_feed()
+        panel.add_widget(Label(text="Create new post", color=rgba(CYAN), font_size="24sp", bold=True))
+        panel.add_widget(Button(text="Take photo", background_normal="", background_color=rgba(BG), color=rgba(CYAN), on_release=lambda *_: (popup.dismiss(), self.choose_image(kind="photo"))))
+        panel.add_widget(Button(text="Record video", background_normal="", background_color=rgba(BG), color=rgba(CYAN), on_release=lambda *_: (popup.dismiss(), self.choose_image(kind="video"))))
+        panel.add_widget(Button(text="Choose from gallery", background_normal="", background_color=rgba(BG), color=rgba(CYAN), on_release=lambda *_: (popup.dismiss(), self.pick_media(kind="gallery"))))
+        close = Button(text="Cancel", background_normal="", background_color=rgba(BG), color=rgba(WHITE))
+        close.bind(on_release=popup.dismiss)
+        panel.add_widget(close)
+        popup.add_widget(panel)
+        popup.open()
 
-    def navigate(self, name):
-        if name == "Profile":
-            self.manager.current = "profile"
-        elif name == "Home":
-            self.manager.current = "home"
-        elif name == "Create":
-            self.pick_media()
-        else:
-            self.show_message("Coming soon", f"{name} is coming soon.")
+    def choose_image(self, kind="photo"):
+        self.show_message("Camera capture is available on Android when permissions are granted.")
+        self.pick_media(kind="camera" if kind == "photo" else "video")
 
-    def show_message(self, title, description):
-        self.feed.clear_widgets()
-        self.feed.add_widget(Label(text=title, color=rgba(CYAN), font_size="22sp", bold=True))
-        self.feed.add_widget(Label(text=description, color=rgba(WHITE), font_size="16sp"))
-
-    def pick_media(self):
+    def pick_media(self, kind="gallery"):
         if ANDROID_PICKER_AVAILABLE:
             try:
                 Intent = autoclass("android.content.Intent")
@@ -395,98 +406,161 @@ class HomeScreen(Screen):
                 intent.setType("*/*")
                 intent.addCategory(Intent.CATEGORY_OPENABLE)
                 mime_types = ["image/*", "video/*"]
+                if kind == "video":
+                    mime_types = ["video/*"]
+                elif kind == "photo":
+                    mime_types = ["image/*"]
                 intent.putExtra(Intent.EXTRA_MIME_TYPES, mime_types)
                 intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                PythonActivity.mActivity.startActivityForResult(intent, self.PICKER_REQUEST_CODE)
+                PythonActivity.mActivity.startActivityForResult(intent, 9999)
                 return
             except Exception as e:
-                self.show_message("Picker error", str(e))
+                self.show_message("Media picker error: " + str(e))
                 return
-        self.open_recent_media_sheet()
-
-    def open_recent_media_sheet(self):
-        sheet = ModalView(size_hint=(1, 0.80), pos_hint={"x": 0, "y": 0}, background_color=(0, 0, 0, 0.72))
-        panel = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(8))
-        with panel.canvas.before:
-            Color(*rgba(PANEL))
-            panel_bg = Rectangle(pos=panel.pos, size=panel.size)
-        panel.bind(pos=lambda w, v: setattr(panel_bg, \"pos\", v), size=lambda w, v: setattr(panel_bg, \"size\", v))
-        panel.add_widget(Label(text="Recent media", color=rgba(WHITE), bold=True, font_size="18sp"))
-        grid = GridLayout(cols=2, spacing=dp(10), size_hint_y=None, row_default_height=dp(140), row_force_default=True)
-        grid.bind(minimum_height=grid.setter("height"))
-        panel.add_widget(grid)
-        sheet.add_widget(panel)
-
-        for i in range(4):
-            item = Button(text=f"Item {i + 1}", background_normal="", background_color=rgba(BG), color=rgba(CYAN))
-            item.bind(on_release=lambda *_: sheet.dismiss())
-            grid.add_widget(item)
-        sheet.open()
+        self.show_message("Gallery picker needs Android runtime support.")
 
     def on_android_activity_result(self, request_code, result_code, intent):
-        if request_code != self.PICKER_REQUEST_CODE:
+        if request_code != 9999:
             return
         try:
             Activity = autoclass("android.app.Activity")
             if result_code != Activity.RESULT_OK or intent is None:
                 return
             uri = intent.getData()
-            if uri is not None:
-                path = self.copy_uri_to_cache(uri)
-                if path and os.path.isfile(path):
-                    self.posts.append(path)
-                    self.show_feed()
+            if uri is None:
+                return
+            path = self.copy_uri_to_cache(uri)
+            if path and os.path.isfile(path):
+                ext = os.path.splitext(path)[1].lower()
+                kind = "video" if ext in VIDEO_EXTENSIONS else "image"
+                self.save_post(path, kind)
+                self.refresh_feed()
         except Exception:
             pass
 
     def copy_uri_to_cache(self, uri):
-        cache_dir = os.path.join(os.getcwd(), "selected_media")
-        os.makedirs(cache_dir, exist_ok=True)
-        destination = os.path.join(cache_dir, "selected_" + str(int(Clock.get_time() * 1000)) + ".jpg")
         try:
-            from urllib.request import urlretrieve
-            import tempfile
-            return destination
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            activity_instance = PythonActivity.mActivity
+            resolver = activity_instance.getContentResolver()
+            input_stream = resolver.openInputStream(uri)
+            if input_stream is None:
+                return None
+            cache_dir = os.path.join(self.manager.app.user_data_dir, "posts")
+            os.makedirs(cache_dir, exist_ok=True)
+            display_name = "upload_" + str(int(Clock.get_time() * 1000))
+            kind = resolver.getType(uri) or ""
+            ext = ".jpg"
+            if "video" in kind:
+                ext = ".mp4"
+            elif "image" in kind:
+                ext = ".jpg"
+            path = os.path.join(cache_dir, display_name + ext)
+            with open(path, "wb") as out:
+                out.write(input_stream.read())
+            return path
         except Exception:
             return None
+
+    def save_post(self, path, kind):
+        state = self.manager.app.state
+        user = state["current_user"]
+        post = {
+            "id": str(random.randint(1000, 999999)),
+            "author": user,
+            "path": path,
+            "kind": kind,
+            "caption": "New post",
+            "tags": "general",
+            "likes": 0,
+            "comments": 0
+        }
+        state["posts"].append(post)
+        self.manager.app.save_state()
 
 
 class ProfileScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        layout = BoxLayout(orientation="vertical")
-        self.add_widget(layout)
+        self.build_ui()
+
+    def build_ui(self):
+        root = BoxLayout(orientation="vertical")
+        self.add_widget(root)
 
         banner = BoxLayout(size_hint_y=None, height=dp(120))
         with banner.canvas.before:
             Color(*rgba(CYAN))
-            banner_bg = Rectangle(pos=banner.pos, size=banner.size)
-        banner.bind(pos=lambda w, v: setattr(banner_bg, \"pos\", v), size=lambda w, v: setattr(banner_bg, \"size\", v))
-        banner.add_widget(Label(text="BANNER", color=rgba(BG), bold=True, font_size="20sp"))
-        layout.add_widget(banner)
+            rect = Rectangle(pos=banner.pos, size=banner.size)
+        banner.bind(pos=lambda w, v: setattr(rect, "pos", v),
+                    size=lambda w, v: setattr(rect, "size", v))
+        banner.add_widget(Label(text="BANNER", color=rgba(BG), font_size="22sp", bold=True))
+        root.add_widget(banner)
 
         info = BoxLayout(size_hint_y=None, height=dp(80), padding=(dp(16), dp(10)))
-        avatar = Button(text="S", background_normal="", background_color=rgba(CYAN), color=rgba(BG), font_size="22sp", bold=True)
+        avatar = Button(text="S", background_normal="", background_color=rgba(CYAN), color=rgba(BG), font_size="20sp", bold=True, size_hint_x=None, width=dp(54))
+        user_name = Label(text="Sam Ng", color=rgba(WHITE), font_size="22sp", bold=True)
         info.add_widget(avatar)
-        info.add_widget(Label(text="Sam Ng", color=rgba(WHITE), font_size="20sp", bold=True))
-        layout.add_widget(info)
+        info.add_widget(user_name)
+        root.add_widget(info)
 
-        layout.add_widget(Label(text="Your videos & posts", color=rgba(CYAN), font_size="18sp", bold=True))
-        layout.add_widget(Label(text="No posts yet", color=rgba(GREY), font_size="16sp"))
+        root.add_widget(Label(text="Your posts", color=rgba(CYAN), bold=True, font_size="18sp", size_hint_y=None, height=dp(30)))
 
-        back_btn = Button(text="Back", background_normal="", background_color=rgba(PANEL), color=rgba(WHITE))
+        self.posts_area = BoxLayout(orientation="vertical", spacing=dp(10), padding=(dp(12), dp(10)))
+        self.posts_area.bind(minimum_height=self.posts_area.setter("height"))
+        scroll = ScrollView(do_scroll_x=False)
+        scroll.add_widget(self.posts_area)
+        root.add_widget(scroll)
+
+        back_btn = Button(text="Back", background_normal="", background_color=rgba(PANEL), color=rgba(WHITE), size_hint_y=None, height=dp(48))
         back_btn.bind(on_release=lambda *_: self.manager.current = "home")
-        layout.add_widget(back_btn)
+        root.add_widget(back_btn)
+
+        self.refresh_profile()
+
+    def refresh_profile(self):
+        self.posts_area.clear_widgets()
+        state = self.manager.app.state
+        posts = [p for p in state["posts"] if p.get("author") == state["current_user"]]
+        if not posts:
+            self.posts_area.add_widget(Label(text="No posts yet", color=rgba(GREY), font_size="18sp"))
+            return
+        for p in reversed(posts):
+            tile = BoxLayout(size_hint_y=None, height=dp(110), spacing=dp(8))
+            if p.get("kind") == "video":
+                tile.add_widget(Label(text="VIDEO", color=rgba(CYAN), bold=True, font_size="18sp"))
+            else:
+                tile.add_widget(Label(text="PHOTO", color=rgba(CYAN), bold=True, font_size="18sp"))
+            tile.add_widget(Label(text=p.get("caption", "New post"), color=rgba(WHITE), font_size="16sp"))
+            self.posts_area.add_widget(tile)
 
 
 class SamNgApp(App):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.store = DataStore(self)
+        self.state = self.store.load()
+
+    def save_state(self):
+        self.store.save(self.state)
+
     def build(self):
         Window.clearcolor = rgba(BG)
-        manager = ScreenManager(transition=FadeTransition(duration=0.2))
-        manager.add_widget(WelcomeScreen(name="welcome"))
-        manager.add_widget(HomeScreen(name="home"))
-        manager.add_widget(ProfileScreen(name="profile"))
-        manager.current = "welcome"
+
+        manager = ScreenManager(transition=FadeTransition(duration=0.22))
+        self.login_screen = LoginScreen(name="login")
+        self.home_screen = HomeScreen(name="home")
+        self.profile_screen = ProfileScreen(name="profile")
+
+        manager.add_widget(self.login_screen)
+        manager.add_widget(self.home_screen)
+        manager.add_widget(self.profile_screen)
+
+        if self.state.get("logged_in", False):
+            manager.current = "home"
+        else:
+            manager.current = "login"
+
         return manager
 
 
