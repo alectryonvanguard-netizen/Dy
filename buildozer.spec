@@ -7,10 +7,13 @@ source.dir = .
 source.include_exts = py,kv,png,jpg,jpeg,atlas,mp4,webp
 
 version = 1.0.0
-requirements = python3,kivy,plyer,pyjnius
+requirements = python3,kivy,plyer,pyjnius,requests
 
 orientation = portrait
 fullscreen = 0
+
+# App Icon
+android.icon = icon.png
 
 android.permissions = INTERNET,READ_MEDIA_IMAGES,READ_MEDIA_VIDEO,READ_EXTERNAL_STORAGE
 
