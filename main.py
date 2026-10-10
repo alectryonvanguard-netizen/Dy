@@ -473,13 +473,13 @@ class BottomNav(BoxLayout):
         app = App.get_running_app()
         for key, label in (("home", "Home"), ("friends", "Friends"), ("create", "+"), ("inbox", "Inbox")):
             p = NeonPill(text=label, active=(active == key), font_size=sp(18 if key == "create" else 14),
-                         size_hint=(1, None), height=dp(52), pos_hint={"center_y": 0.5})
+                         size_hint=(1, None), height=dp(43), pos_hint={"center_y": 1.0})
             p.bind(on_release=lambda *_, k=key: app.nav(k))
             self.add_widget(p)
         prof = app.profile()
-        avatar = CircleImage(source=prof.get("avatar", ""), letter=prof.get("name", "S"),
+        avatar = CircleImage(source=prof.get("avatar", ""), letter=prof.get("name", "Photo"),
                              ring=T("glow") if active == "profile" else [T("glow")[0], T("glow")[1], T("glow")[2], 0.6],
-                             size_hint=(None, None), size=(dp(54), dp(54)), pos_hint={"center_y": 0.5})
+                             size_hint=(None, None), size=(dp(54), dp(54)), pos_hint={"center_y":1.0})
         avatar.bind(on_release=lambda *_: app.nav("profile"))
         self.add_widget(avatar)
 
@@ -960,7 +960,7 @@ class HomeScreen(ThemedScreen):
 
 
 class ProfileScreen(ThemedScreen):
-    """Profile screen displaying user information and posts with a top-right working settings menu."""
+    """Profile screen displaying user information and posts with a three dots vertical working settings menu."""
 
     def __init__(self, **kw):
         super().__init__(**kw)
