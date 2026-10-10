@@ -6,7 +6,10 @@ package.domain = com.samng
 source.dir = .
 source.include_exts = py,kv,png,jpg,jpeg,atlas,mp4,webp
 
-version = 1.0.0
+# MAIN ENTRY POINT - Run Main.py (the full app)
+source.main = Main
+
+version = 1.0.1
 requirements = python3,kivy,plyer,pyjnius,requests
 
 orientation = portrait
@@ -17,7 +20,7 @@ android.icon = icon.png
 
 android.permissions = INTERNET,READ_MEDIA_IMAGES,READ_MEDIA_VIDEO,READ_EXTERNAL_STORAGE
 
-android.api = 33
+android.api = 36
 android.minapi = 28
 android.ndk = 25b
 
