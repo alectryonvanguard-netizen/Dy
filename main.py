@@ -473,7 +473,7 @@ class BottomNav(BoxLayout):
         app = App.get_running_app()
         for key, label in (("home", "Home"), ("friends", "Friends"), ("create", "+"), ("inbox", "Inbox")):
             p = NeonPill(text=label, active=(active == key), font_size=sp(18 if key == "create" else 14),
-                         size_hint=(1, None), height=dp(44), pos_hint={"center_y": 0.5})
+                         size_hint=(1, None), height=dp(52), pos_hint={"center_y": 0.5})
             p.bind(on_release=lambda *_, k=key: app.nav(k))
             self.add_widget(p)
         prof = app.profile()
@@ -739,7 +739,7 @@ class InboxScreen(ThemedScreen):
         messages = app.state.get("inbox_messages", [])
         if not messages:
             inner.add_widget(Wrap(text="Your message will appear here", bold=True, font_size=sp(20), color=T("text"), halign="center"))
-            inner.add_widget(Wrap(text="When someone messages you, it will show up here in real-time.", font_size=sp(14), color=T("sub"), halign="center"))
+            inner.add_widget(Wrap(text="your massage will apear here.", font_size=sp(14), color=T("sub"), halign="center"))
         else:
             for msg in messages:
                 card = Card(bg="card", radius=dp(12), outline=True, padding=dp(12), size_hint_y=None, height=dp(70))
