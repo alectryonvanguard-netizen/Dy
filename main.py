@@ -1,3 +1,13 @@
+"""
+SAM NG - Kivy app (Android APK via Buildozer)
+
+Flow:   Welcome (Login / Sign up / Skip) -> Terms and Privacy (must agree) -> Home
+Home:   full-screen posts (swipe up / down), STEM | Following | For You tabs
+Create: back camera, front camera (selfie), record video, or choose from gallery
+Post:   Like, Comment, Save, Share on the right side
+Other:  Friends (follow people), Inbox (notifications), Profile, three-dot settings menu
+"""
+
 import os
 import json
 import time
@@ -5,6 +15,7 @@ import copy
 import hashlib
 import threading
 
+from kivy.animation import Animation
 from kivy.app import App
 from kivy.clock import Clock
 from kivy.core.window import Window
@@ -23,38 +34,46 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.switch import Switch
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
-from kivy.utils import get_color_from_hex
+from kivy.utils import get_color_from_hex, escape_markup
 
 # ----------------------------------------------------------------------------
-# TEXTS YOU CAN CHANGE
+# THINGS YOU CAN CHANGE
 # ----------------------------------------------------------------------------
 APP_NAME = "Sam Ng"
-APP_VERSION = "1.0.7"
-HOME_HEADLINE = "Sam Ng is for you."
+APP_VERSION = "1.0.3"
+HOME_HEADLINE = "Sam Ng is for you."      # big line on the empty home screen
 
-TERMS_TEXT = "By using Sam Ng, you agree to abide by community standards, respect other users, and keep your interactions safe and secure."
-PRIVACY_TEXT = "Your personal data and media files are stored locally on your device and protected by your secure account keys."
-HELP_TEXT = "Need assistance? You can check device permissions from the profile menu, or use the camera to record and post videos."
-ABOUT_TEXT = "Sam Ng is a mobile-first content creation and sharing application built with Kivy and Python."
+TERMS_TEXT = ""      # paste your Terms and Conditions here
+PRIVACY_TEXT = ""    # paste your Privacy Policy here
+HELP_TEXT = ""       # paste your Help text here
+ABOUT_TEXT = ""      # paste your About text here
 PLACEHOLDER = "[This text has not been added yet.]"
 
+TOP_LOWER = dp(26)       # how far the STEM / Following / For You row is pushed down
+NAV_RAISE = dp(22)       # how far the bottom row (Home, Friends ... photo) is raised
+FEED_MODE = "contain"    # "contain" = whole picture visible, "cover" = fills screen (crops edges)
+PROFILE_PHOTO_X = 0.5    # profile photo position: 0.0 = far left, 0.5 = centre, 1.0 = far right
+
 # ----------------------------------------------------------------------------
-# ANDROID SUPPORT
+# ANDROID SUPPORT (safe on desktop too)
 # ----------------------------------------------------------------------------
 try:
-    from jnius import autoclass
+    from jnius import autoclass, cast
     from android import activity as android_activity
     ANDROID = True
 except Exception:
     autoclass = None
+    cast = None
     android_activity = None
     ANDROID = False
 
-REQ_PICK = 9001
+REQ_PICK = 9001      # gallery pick / video capture
+REQ_PHOTO = 9002     # photo capture
 
 VIDEO_EXTENSIONS = (".mp4", ".mkv", ".mov", ".avi", ".webm", ".3gp", ".m4v")
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
 STATE_FILE = "samng_state_v2.json"
+WHITE = (1, 1, 1, 1)
 
 # ----------------------------------------------------------------------------
 # THEME
@@ -86,6 +105,7 @@ def T(key):
 
 
 def paint(widget, key, radius=0):
+    """Paint a flat (optionally rounded) background behind a widget."""
     with widget.canvas.before:
         Color(*T(key))
         shape = RoundedRectangle(pos=widget.pos, size=widget.size, radius=[radius])
@@ -94,7 +114,17 @@ def paint(widget, key, radius=0):
     return shape
 
 
+def paint_rgba(widget, rgba, radius=0):
+    with widget.canvas.before:
+        Color(*rgba)
+        shape = RoundedRectangle(pos=widget.pos, size=widget.size, radius=[radius])
+    widget.bind(pos=lambda w, v: setattr(shape, "pos", v),
+                size=lambda w, v: setattr(shape, "size", v))
+    return shape
+
+
 def paint_bg(widget):
+    """Screen background: flat colour, plus a faint chain-link fence in dark mode."""
     paint(widget, "bg")
     if not _mode["dark"]:
         return
@@ -117,6 +147,9 @@ def paint_bg(widget):
     redraw()
 
 
+# ----------------------------------------------------------------------------
+# IMAGE HELPERS
+# ----------------------------------------------------------------------------
 def load_texture(path):
     if not path or not os.path.isfile(path):
         return None
@@ -129,6 +162,7 @@ def load_texture(path):
 
 
 def cover_region(tex, w, h):
+    """Centre-crop a texture so it fills a w x h box without stretching."""
     if w <= 0 or h <= 0:
         return tex
     tw, th = tex.size
@@ -141,7 +175,26 @@ def cover_region(tex, w, h):
     return tex.get_region(0, (th - nh) // 2, tw, nh)
 
 
+def ago(ts):
+    d = int(time.time() - ts)
+    if d < 60:
+        return "just now"
+    if d < 3600:
+        return "%dm ago" % (d // 60)
+    if d < 86400:
+        return "%dh ago" % (d // 3600)
+    return "%dd ago" % (d // 86400)
+
+
+# ----------------------------------------------------------------------------
+# BASIC WIDGETS
+# NOTE: drawing code below never reads self.center / self.center_x. Those are
+# cached properties that can be out of date inside a pos/size callback, which
+# is what pushed the profile photo off-screen and the dots to the bottom.
+# ----------------------------------------------------------------------------
 class LLabel(Label):
+    """Label that is left aligned and vertically centred inside its box."""
+
     def __init__(self, **kw):
         kw.setdefault("halign", "left")
         kw.setdefault("valign", "middle")
@@ -150,6 +203,8 @@ class LLabel(Label):
 
 
 class Wrap(Label):
+    """Wrapping label that grows in height to fit its text."""
+
     def __init__(self, **kw):
         kw.setdefault("size_hint_y", None)
         kw.setdefault("halign", "left")
@@ -175,12 +230,16 @@ class Card(BoxLayout):
 
 
 class MenuCard(Card):
+    """Card that swallows touches so taps inside it never reach the layer below."""
+
     def on_touch_down(self, touch):
         handled = super().on_touch_down(touch)
         return handled or self.collide_point(*touch.pos)
 
 
 class NeonPill(ButtonBehavior, Label):
+    """Dark oval button with a neon outline (matches the design)."""
+
     def __init__(self, active=False, fg=None, **kw):
         super().__init__(**kw)
         self.active = active
@@ -233,6 +292,8 @@ def pill(text, primary=False, **kw):
 
 
 class Icon(ButtonBehavior, Widget):
+    """Vector icons drawn with canvas lines: search, dots, back, plus."""
+
     def __init__(self, kind, color=None, circle_bg=None, **kw):
         super().__init__(**kw)
         self.kind = kind
@@ -244,10 +305,11 @@ class Icon(ButtonBehavior, Widget):
     def draw(self, *args):
         self.canvas.before.clear()
         self.canvas.after.clear()
-        cx, cy = self.center
-        s = min(self.size)
+        s = min(self.width, self.height)
         if s <= 0:
             return
+        cx = self.x + self.width / 2.0
+        cy = self.y + self.height / 2.0
         if self.circle_bg is not None:
             with self.canvas.before:
                 Color(*self.circle_bg)
@@ -258,13 +320,8 @@ class Icon(ButtonBehavior, Widget):
                 r = s * 0.2
                 Line(circle=(cx - r * 0.3, cy + r * 0.3, r), width=dp(1.8))
                 Line(points=[cx + r * 0.6, cy - r * 0.6, cx + r * 1.6, cy - r * 1.6], width=dp(2), cap="round")
-            elif self.kind == "mic":
-                r = s * 0.18
-                Line(rounded_rectangle=(cx - r, cy - r * 0.3, r * 2, r * 2.2, r), width=dp(1.8))
-                Line(points=[cx - r * 1.2, cy, cx - r * 1.2, cy - r * 0.8, cx + r * 1.2, cy - r * 0.8, cx + r * 1.2, cy], width=dp(1.8), cap="round")
-                Line(points=[cx, cy - r * 1.4, cx, cy - r * 0.8], width=dp(1.8), cap="round")
             elif self.kind == "dots":
-                d = dp(5.0)
+                d = dp(4.6)
                 for off in (s * 0.22, 0, -s * 0.22):
                     Ellipse(pos=(cx - d / 2, cy + off - d / 2), size=(d, d))
             elif self.kind == "back":
@@ -277,12 +334,15 @@ class Icon(ButtonBehavior, Widget):
 
 
 class TabLabel(ButtonBehavior, Label):
-    def __init__(self, text, active=False, **kw):
+    def __init__(self, text, active=False, light=False, **kw):
         super().__init__(text=text, **kw)
         self.active = active
         self.bold = True
         self.font_size = sp(17)
-        self.color = T("text") if active else T("sub")
+        if light:      # sitting on top of a picture: always white
+            self.color = WHITE if active else (1, 1, 1, 0.7)
+        else:
+            self.color = T("text") if active else T("sub")
         self.bind(pos=self.draw, size=self.draw)
         self.draw()
 
@@ -291,7 +351,7 @@ class TabLabel(ButtonBehavior, Label):
         if not self.active or self.width <= 0:
             return
         glow = T("glow")
-        cx = self.center_x
+        cx = self.x + self.width / 2.0
         y = self.y + dp(4)
         half = min(self.width, dp(90)) * 0.32
         with self.canvas.after:
@@ -302,9 +362,12 @@ class TabLabel(ButtonBehavior, Label):
 
 
 class CoverImage(ButtonBehavior, Widget):
-    def __init__(self, source="", fallback="panel", **kw):
+    """Picture in a box. mode='cover' fills it (crops edges); 'contain' shows the whole picture."""
+
+    def __init__(self, source="", fallback="panel", mode="cover", **kw):
         super().__init__(**kw)
         self.fallback = fallback
+        self.mode = mode
         self._tex = load_texture(source)
         self.bind(pos=self.redraw, size=self.redraw)
         self.redraw()
@@ -314,18 +377,30 @@ class CoverImage(ButtonBehavior, Widget):
 
     def redraw(self, *args):
         self.canvas.clear()
-        if self.width <= 0 or self.height <= 0:
+        w, h = self.size
+        if w <= 0 or h <= 0:
             return
+        x, y = self.pos
         with self.canvas:
-            if self._tex is not None:
+            if self._tex is not None and self.mode == "contain":
+                Color(0, 0, 0, 1)
+                Rectangle(pos=self.pos, size=self.size)
+                tw, th = self._tex.size
+                scale = min(float(w) / tw, float(h) / th)
+                dw, dh = tw * scale, th * scale
                 Color(1, 1, 1, 1)
-                Rectangle(texture=cover_region(self._tex, self.width, self.height), pos=self.pos, size=self.size)
+                Rectangle(texture=self._tex, pos=(x + (w - dw) / 2.0, y + (h - dh) / 2.0), size=(dw, dh))
+            elif self._tex is not None:
+                Color(1, 1, 1, 1)
+                Rectangle(texture=cover_region(self._tex, w, h), pos=self.pos, size=self.size)
             else:
                 Color(*T(self.fallback))
                 Rectangle(pos=self.pos, size=self.size)
 
 
 class VideoTile(ButtonBehavior, Widget):
+    """Dark tile with a play triangle, used for videos."""
+
     def __init__(self, **kw):
         super().__init__(**kw)
         self.bind(pos=self.redraw, size=self.redraw)
@@ -333,10 +408,12 @@ class VideoTile(ButtonBehavior, Widget):
 
     def redraw(self, *args):
         self.canvas.clear()
-        if self.width <= 0 or self.height <= 0:
+        w, h = self.size
+        if w <= 0 or h <= 0:
             return
-        cx, cy = self.center
-        s = min(self.size) * 0.16
+        cx = self.x + w / 2.0
+        cy = self.y + h / 2.0
+        s = min(w, h) * 0.16
         with self.canvas:
             Color(*T("panel"))
             Rectangle(pos=self.pos, size=self.size)
@@ -345,6 +422,8 @@ class VideoTile(ButtonBehavior, Widget):
 
 
 class CircleImage(ButtonBehavior, Widget):
+    """Round profile picture with an optional neon ring."""
+
     def __init__(self, source="", letter="S", ring=None, **kw):
         super().__init__(**kw)
         self.ring = ring
@@ -357,10 +436,11 @@ class CircleImage(ButtonBehavior, Widget):
 
     def redraw(self, *args):
         self.canvas.before.clear()
-        d = min(self.size)
+        d = min(self.width, self.height)
         if d <= 0:
             return
-        cx, cy = self.center
+        cx = self.x + self.width / 2.0
+        cy = self.y + self.height / 2.0
         inset = dp(3) if self.ring is not None else 0
         di = d - 2 * inset
         self.lbl.pos = self.pos
@@ -382,12 +462,18 @@ class CircleImage(ButtonBehavior, Widget):
 
 
 def topbar(title, on_back):
-    bar = BoxLayout(size_hint_y=None, height=dp(56), padding=(dp(8), dp(8)), spacing=dp(8))
+    bar = BoxLayout(size_hint_y=None, height=dp(56) + TOP_LOWER, padding=(dp(8), TOP_LOWER, dp(8), dp(8)),
+                    spacing=dp(8))
     back = Icon("back", size_hint=(None, 1), width=dp(40))
     back.bind(on_release=lambda *_: on_back())
     bar.add_widget(back)
     bar.add_widget(LLabel(text=title, bold=True, font_size=sp(20), color=T("text")))
     return bar
+
+
+def plain_title(text):
+    return Label(text=text, bold=True, font_size=sp(22), color=T("accent"), size_hint_y=None,
+                 height=dp(52) + TOP_LOWER, padding=(0, TOP_LOWER / 2.0))
 
 
 def scroll_col(spacing=dp(10), padding=dp(14)):
@@ -399,6 +485,7 @@ def scroll_col(spacing=dp(10), padding=dp(14)):
 
 
 def field(hint, password=False, text="", height=dp(52)):
+    """Rounded input box. Returns (card, textinput)."""
     card = Card(bg="panel", radius=dp(14), outline=True, size_hint_y=None, height=height,
                 padding=(dp(14), 0))
     ti = TextInput(
@@ -414,6 +501,9 @@ def hash_pw(user, pw):
     return hashlib.sha256(("samng|" + user + "|" + pw).encode("utf-8")).hexdigest()
 
 
+# ----------------------------------------------------------------------------
+# STORAGE
+# ----------------------------------------------------------------------------
 DEFAULT_STATE = {
     "logged_in": False,
     "is_guest": False,
@@ -422,13 +512,10 @@ DEFAULT_STATE = {
     "users": {},
     "guest_profile": {"name": "Guest", "bio": "", "avatar": "", "banner": ""},
     "posts": [],
-    "inbox_messages": [],
-    "settings": {
-        "dark_mode": True,
-        "private_account": False,
-        "allow_comments": True,
-        "personalized": True,
-    },
+    "follows": {},
+    "saved": {},
+    "notifications": [],
+    "settings": {"dark_mode": True},
 }
 
 
@@ -447,6 +534,11 @@ class DataStore:
                 state["settings"].update(settings)
         except Exception:
             pass
+        for p in state["posts"]:                      # upgrade posts saved by older versions
+            if "liked_by" not in p:
+                p["liked_by"] = ["guest"] if p.get("liked") else []
+            if not isinstance(p.get("comments"), list):
+                p["comments"] = []
         return state
 
     def save(self, state):
@@ -466,72 +558,39 @@ class ThemedScreen(Screen):
         self.build_ui()
 
 
+# ----------------------------------------------------------------------------
+# BOTTOM NAV (neon pills + round profile picture)
+# ----------------------------------------------------------------------------
+NAV_HEIGHT = dp(76) + NAV_RAISE
+
+
 class BottomNav(BoxLayout):
-    def __init__(self, active="home", **kw):
-        super().__init__(orientation="horizontal", size_hint_y=None, height=dp(76),
-                         padding=(dp(12), dp(10)), spacing=dp(8), **kw)
+    def __init__(self, active="home", translucent=False, **kw):
+        super().__init__(orientation="horizontal", size_hint_y=None, height=NAV_HEIGHT,
+                         padding=(dp(12), dp(10), dp(12), dp(10) + NAV_RAISE), spacing=dp(8), **kw)
         app = App.get_running_app()
-        for key, label in (("home", "Home"), ("friends", "Friends"), ("create", "+"), ("inbox", "Inbox")):
-            p = NeonPill(text=label, active=(active == key), font_size=sp(18 if key == "create" else 14),
-                         size_hint=(1, None), height=dp(43), pos_hint={"center_y": 1.0})
+        if translucent:
+            paint_rgba(self, (0, 0, 0, 0.38))
+        unread = app.unread_count()
+        for key, label in (("home", "Home"), ("friends", "Friends"), ("create", "Create"), ("inbox", "Inbox")):
+            if key == "inbox" and unread:
+                label = "Inbox (%d)" % unread
+            p = NeonPill(text=label, active=(active == key), font_size=sp(14),
+                         size_hint=(1, None), height=dp(44), pos_hint={"center_y": 0.5})
             p.bind(on_release=lambda *_, k=key: app.nav(k))
             self.add_widget(p)
         prof = app.profile()
-        avatar = CircleImage(source=prof.get("avatar", ""), letter=prof.get("name", "Photo"),
-                             ring=T("glow") if active == "profile" else [T("glow")[0], T("glow")[1], T("glow")[2], 0.6],
-                             size_hint=(None, None), size=(dp(54), dp(54)), pos_hint={"center_y":1.0})
+        glow = T("glow")
+        ring = glow if active == "profile" else [glow[0], glow[1], glow[2], 0.6]
+        avatar = CircleImage(source=prof.get("avatar", ""), letter=prof.get("name", "S"), ring=ring,
+                             size_hint=(None, None), size=(dp(54), dp(54)), pos_hint={"center_y": 0.5})
         avatar.bind(on_release=lambda *_: app.nav("profile"))
         self.add_widget(avatar)
 
 
-class BootScreen(ThemedScreen):
-    def __init__(self, **kw):
-        super().__init__(**kw)
-        self.build_ui()
-
-    def build_ui(self):
-        root = FloatLayout()
-        paint_bg(root)
-        self.add_widget(root)
-
-        logo_img = CoverImage(
-            source="logo.png",
-            size_hint=(None, None),
-            size=(dp(240), dp(240)),
-            pos_hint={"center_x": 0.5, "center_y": 0.55}
-        )
-        root.add_widget(logo_img)
-
-        load_container = FloatLayout(
-            size_hint=(0.7, None),
-            height=dp(6),
-            pos_hint={"center_x": 0.5, "y": 0.15}
-        )
-        with load_container.canvas.before:
-            Color(0.15, 0.15, 0.25, 0.5)
-            self.bg_bar = RoundedRectangle(pos=load_container.pos, size=load_container.size, radius=[dp(3)])
-            Color(0.0, 0.9, 0.96, 1.0)
-            self.fg_bar = RoundedRectangle(pos=load_container.pos, size=(0, dp(6)), radius=[dp(3)])
-
-        def update_bar(dt):
-            current_width = self.fg_bar.size[0]
-            max_width = load_container.width
-            if current_width < max_width:
-                self.fg_bar.size = (current_width + (max_width / 30.0), dp(6))
-
-        load_container.bind(pos=lambda w, v: setattr(self.bg_bar, 'pos', v) or setattr(self.fg_bar, 'pos', v))
-        root.add_widget(load_container)
-
-        self.progress_event = Clock.schedule_interval(update_bar, 0.1)
-        Clock.schedule_once(self.finish_boot, 3.0)
-
-    def finish_boot(self, dt):
-        if hasattr(self, 'progress_event'):
-            self.progress_event.cancel()
-        app = App.get_running_app()
-        app.transition_from_boot()
-
-
+# ----------------------------------------------------------------------------
+# ONBOARDING SCREENS
+# ----------------------------------------------------------------------------
 class WelcomeScreen(ThemedScreen):
     def __init__(self, **kw):
         super().__init__(**kw)
@@ -543,7 +602,7 @@ class WelcomeScreen(ThemedScreen):
         paint_bg(root)
         self.add_widget(root)
 
-        col = BoxLayout(orientation="vertical", size_hint=(0.8, None), height=dp(340), spacing=dp(16),
+        col = BoxLayout(orientation="vertical", size_hint=(0.8, None), height=dp(420), spacing=dp(14),
                         pos_hint={"center_x": 0.5, "center_y": 0.5})
         col.add_widget(Label(text="SAM NG", color=T("accent"), bold=True, font_size=sp(46),
                              size_hint_y=None, height=dp(90)))
@@ -552,9 +611,12 @@ class WelcomeScreen(ThemedScreen):
         col.add_widget(Widget())
         login = pill("Login", primary=True)
         login.bind(on_release=lambda *_: app.go("login"))
-        skip = pill("Skip sign in")
+        signup = pill("Sign up")
+        signup.bind(on_release=lambda *_: app.go("signup"))
+        skip = pill("Skip sign in", height=dp(48))
         skip.bind(on_release=lambda *_: app.skip_sign_in())
         col.add_widget(login)
+        col.add_widget(signup)
         col.add_widget(skip)
         root.add_widget(col)
 
@@ -571,39 +633,104 @@ class LoginScreen(ThemedScreen):
         self.add_widget(root)
         root.add_widget(topbar("Login", app.back))
 
-        col = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(300), spacing=dp(14),
-                        padding=(dp(24), dp(24)))
-        col.add_widget(Label(text="Log in or create an account", color=T("sub"), font_size=sp(15),
+        col = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(340), spacing=dp(14),
+                        padding=(dp(24), dp(16)))
+        col.add_widget(Label(text="Welcome back", color=T("sub"), font_size=sp(15),
                              size_hint_y=None, height=dp(28)))
         user_card, self.username = field("Username")
         pass_card, self.password = field("Password", password=True)
         col.add_widget(user_card)
         col.add_widget(pass_card)
-        go = pill("Continue", primary=True)
+        go = pill("Login", primary=True)
         go.bind(on_release=lambda *_: self.submit())
         col.add_widget(go)
+        to_signup = pill("No account? Sign up", height=dp(48))
+        to_signup.bind(on_release=lambda *_: app.go("signup"))
+        col.add_widget(to_signup)
         root.add_widget(col)
         root.add_widget(Widget())
 
     def submit(self):
         app = App.get_running_app()
-        username = self.username.text.strip()
+        name = self.username.text.strip()
         password = self.password.text
-        if len(username) < 3 or len(password) < 4:
-            app.toast("Username 3+ letters, password 4+ characters")
+        if not name or not password:
+            app.toast("Enter your username and password")
             return
-        users = app.state["users"]
-        if username in users:
-            if users[username].get("pw") != hash_pw(username, password):
-                app.toast("Wrong password")
-                return
-        else:
-            users[username] = {"pw": hash_pw(username, password), "name": username,
-                               "bio": "", "avatar": "", "banner": ""}
-        app.state["current_user"] = username
+        key = app.find_user(name)
+        if key is None:
+            app.toast("No account found. Please sign up first.")
+            return
+        if app.state["users"][key].get("pw") != hash_pw(key, password):
+            app.toast("Wrong password")
+            return
+        app.state["current_user"] = key
         app.state["logged_in"] = True
         app.state["is_guest"] = False
         app.save_state()
+        self.password.text = ""
+        app.after_auth()
+
+
+class SignupScreen(ThemedScreen):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.build_ui()
+
+    def build_ui(self):
+        app = App.get_running_app()
+        root = BoxLayout(orientation="vertical")
+        paint_bg(root)
+        self.add_widget(root)
+        root.add_widget(topbar("Sign up", app.back))
+
+        col = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(430), spacing=dp(14),
+                        padding=(dp(24), dp(16)))
+        col.add_widget(Label(text="Create your account", color=T("sub"), font_size=sp(15),
+                             size_hint_y=None, height=dp(28)))
+        u_card, self.username = field("Choose a username")
+        p_card, self.password = field("Choose a password (6+ characters)", password=True)
+        c_card, self.confirm = field("Repeat the password", password=True)
+        col.add_widget(u_card)
+        col.add_widget(p_card)
+        col.add_widget(c_card)
+        go = pill("Create account", primary=True)
+        go.bind(on_release=lambda *_: self.submit())
+        col.add_widget(go)
+        to_login = pill("Already have an account? Login", height=dp(48))
+        to_login.bind(on_release=lambda *_: app.go("login"))
+        col.add_widget(to_login)
+        root.add_widget(col)
+        root.add_widget(Widget())
+
+    def submit(self):
+        app = App.get_running_app()
+        name = self.username.text.strip()
+        password = self.password.text
+        if len(name) < 3 or " " in name:
+            app.toast("Username: 3+ characters, no spaces")
+            return
+        if len(password) < 6:
+            app.toast("Password must be 6+ characters")
+            return
+        if password != self.confirm.text:
+            app.toast("The two passwords do not match")
+            return
+        if app.find_user(name) is not None:
+            app.toast("That username is already taken")
+            return
+        key = name.lower()
+        app.state["users"][key] = {
+            "pw": hash_pw(key, password), "name": name, "bio": "", "avatar": "", "banner": "",
+            "private": False, "allow_comments": True, "notify": True,
+        }
+        app.state["current_user"] = key
+        app.state["logged_in"] = True
+        app.state["is_guest"] = False
+        app.save_state()
+        self.password.text = ""
+        self.confirm.text = ""
+        app.toast("Account created")
         app.after_auth()
 
 
@@ -614,7 +741,8 @@ class TermsScreen(ThemedScreen):
 
     def build_ui(self):
         app = App.get_running_app()
-        root = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(12))
+        root = BoxLayout(orientation="vertical", padding=(dp(16), dp(16) + TOP_LOWER, dp(16), dp(16)),
+                         spacing=dp(12))
         paint_bg(root)
         self.add_widget(root)
 
@@ -649,6 +777,8 @@ class TermsScreen(ThemedScreen):
 
 
 class InfoScreen(ThemedScreen):
+    """Simple read-only text page (Help, About, Terms and Privacy)."""
+
     def __init__(self, title, sections, **kw):
         super().__init__(**kw)
         self.title_text = title
@@ -676,19 +806,20 @@ class PrivacyScreen(ThemedScreen):
 
     def build_ui(self):
         app = App.get_running_app()
+        prof = app.profile()
         root = BoxLayout(orientation="vertical")
         paint_bg(root)
         self.add_widget(root)
         root.add_widget(topbar("Privacy settings", app.back))
         sv, inner = scroll_col(padding=dp(14))
-        for label, key in (("Private account", "private_account"),
-                           ("Allow comments on my posts", "allow_comments"),
-                           ("Personalised suggestions", "personalized")):
-            row = Card(bg="panel", radius=dp(14), outline=True, size_hint_y=None, height=dp(58),
+        for label, key, default in (("Private account (only followers see my posts)", "private", False),
+                                    ("Allow comments on my posts", "allow_comments", True),
+                                    ("Send me inbox notifications", "notify", True)):
+            row = Card(bg="panel", radius=dp(14), outline=True, size_hint_y=None, height=dp(64),
                        padding=(dp(14), 0), spacing=dp(8))
-            row.add_widget(LLabel(text=label, color=T("text"), font_size=sp(16)))
-            sw = Switch(active=bool(app.state["settings"].get(key)), size_hint=(None, 1), width=dp(83))
-            sw.bind(active=lambda w, v, k=key: app.set_setting(k, v))
+            row.add_widget(LLabel(text=label, color=T("text"), font_size=sp(15)))
+            sw = Switch(active=bool(prof.get(key, default)), size_hint=(None, 1), width=dp(83))
+            sw.bind(active=lambda w, v, k=key: app.set_profile_flag(k, v))
             row.add_widget(sw)
             inner.add_widget(row)
         policy = pill("Read the Privacy Policy", height=dp(50))
@@ -697,6 +828,293 @@ class PrivacyScreen(ThemedScreen):
         root.add_widget(sv)
 
 
+# ----------------------------------------------------------------------------
+# FULL-SCREEN FEED
+# ----------------------------------------------------------------------------
+class FeedPager(FloatLayout):
+    """Shows one post at a time, full screen. Swipe up for the next post, down for the previous."""
+
+    def __init__(self, posts, make_page, start=0, on_change=None, **kw):
+        super().__init__(**kw)
+        self.posts = posts
+        self.make_page = make_page
+        self.on_change = on_change
+        self.index = 0
+        self.page = None
+        self._sx = None
+        self._sy = None
+        self.show(start, fade=False)
+
+    def show(self, index, fade=True):
+        if not self.posts:
+            return
+        self.index = max(0, min(index, len(self.posts) - 1))
+        if self.page is not None:
+            self.remove_widget(self.page)
+        self.page = self.make_page(self.posts[self.index], self)
+        self.add_widget(self.page)
+        if fade:
+            self.page.opacity = 0
+            Animation(opacity=1, duration=0.18).start(self.page)
+        if self.on_change:
+            self.on_change(self.index)
+
+    def refresh_current(self):
+        self.show(self.index, fade=False)
+
+    def on_touch_down(self, touch):
+        if self.collide_point(*touch.pos):
+            self._sx, self._sy = touch.pos
+        return super().on_touch_down(touch)
+
+    def on_touch_up(self, touch):
+        if self._sy is not None:
+            dy = touch.y - self._sy
+            dx = touch.x - self._sx
+            self._sy = None
+            if abs(dy) > dp(70) and abs(dy) > abs(dx) * 1.3:
+                super().on_touch_up(touch)
+                self.show(self.index + (1 if dy > 0 else -1))
+                return True
+        return super().on_touch_up(touch)
+
+
+class HomeScreen(ThemedScreen):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.tab = "foryou"
+        self.search_text = ""
+        self.search_open = False
+        self.page_index = 0
+        self.pager = None
+        self.content = None
+        self.build_ui()
+
+    def on_pre_enter(self, *args):
+        self.rebuild()
+
+    def set_tab(self, key):
+        self.tab = key
+        self.page_index = 0
+        self.rebuild()
+
+    def toggle_search(self):
+        self.search_open = not self.search_open
+        self.page_index = 0
+        if not self.search_open:
+            self.search_text = ""
+            self.rebuild()
+            return
+        self.rebuild()
+        Clock.schedule_once(lambda dt: setattr(self.search, "focus", True), 0.15)
+
+    def on_search(self, instance, value):
+        self.search_text = value.strip().lower()
+        self.page_index = 0
+        self.fill_content()
+
+    def set_index(self, index):
+        self.page_index = index
+
+    def top_height(self):
+        return TOP_LOWER + dp(52) + (dp(52) if self.search_open else 0)
+
+    def visible_posts(self):
+        app = App.get_running_app()
+        me = app.author_id()
+        following = app.following_of(me)
+        out = []
+        for post in app.state["posts"]:
+            author = post.get("author", "")
+            tags = post.get("tags", "").lower()
+            if not app.can_see(post):
+                continue
+            if self.tab == "following" and author not in following:
+                continue
+            if self.tab == "stem" and "stem" not in tags:
+                continue
+            if self.search_text:
+                hay = (post.get("caption", "") + " " + tags + " " + author).lower()
+                if self.search_text not in hay:
+                    continue
+            out.append(post)
+        return list(reversed(out))
+
+    def build_ui(self):
+        app = App.get_running_app()
+        posts = self.visible_posts()
+        has_posts = bool(posts)
+
+        root = FloatLayout()
+        paint_bg(root)
+        self.add_widget(root)
+
+        self.content = FloatLayout(size_hint=(1, 1))
+        root.add_widget(self.content)
+
+        # --- top row: STEM | Following | For You   (search)  (+)      (pushed down by TOP_LOWER)
+        tabs_box = BoxLayout(orientation="vertical", size_hint=(1, None), height=self.top_height(),
+                             pos_hint={"x": 0, "top": 1})
+        if has_posts:
+            paint_rgba(tabs_box, (0, 0, 0, 0.38))
+        tabs_box.add_widget(Widget(size_hint_y=None, height=TOP_LOWER))
+        tabs = BoxLayout(size_hint_y=None, height=dp(52), padding=(dp(10), dp(4)), spacing=dp(2))
+        for key, label in (("stem", "STEM"), ("following", "Following"), ("foryou", "For You")):
+            t = TabLabel(label, active=(self.tab == key), light=has_posts)
+            t.bind(on_release=lambda *_, k=key: self.set_tab(k))
+            tabs.add_widget(t)
+        s_btn = Icon("search", color=(WHITE if has_posts else T("sub")), size_hint=(None, 1), width=dp(38))
+        s_btn.bind(on_release=lambda *_: self.toggle_search())
+        p_btn = Icon("plus", color=T("accent"), size_hint=(None, 1), width=dp(38))
+        p_btn.bind(on_release=lambda *_: app.open_create_menu())
+        tabs.add_widget(s_btn)
+        tabs.add_widget(p_btn)
+        tabs_box.add_widget(tabs)
+        if self.search_open:
+            row = BoxLayout(size_hint_y=None, height=dp(52), padding=(dp(12), dp(2), dp(12), dp(4)))
+            card, self.search = field("Search posts, people, tags", text=self.search_text, height=dp(46))
+            self.search.bind(text=self.on_search)
+            row.add_widget(card)
+            tabs_box.add_widget(row)
+        root.add_widget(tabs_box)
+
+        # --- bottom row (raised)
+        nav = BottomNav(active="home", translucent=has_posts)
+        nav.size_hint = (1, None)
+        nav.pos_hint = {"x": 0, "y": 0}
+        root.add_widget(nav)
+
+        self.fill_content()
+
+    def fill_content(self):
+        app = App.get_running_app()
+        self.content.clear_widgets()
+        posts = self.visible_posts()
+        self.pager = None
+        if posts:
+            start = min(self.page_index, len(posts) - 1)
+            self.pager = FeedPager(posts, self.make_page, start=start, on_change=self.set_index,
+                                   size_hint=(1, 1))
+            self.content.add_widget(self.pager)
+            return
+
+        prof = app.profile()
+        body = BoxLayout(orientation="vertical", size_hint=(1, 1),
+                         padding=(0, self.top_height(), 0, NAV_HEIGHT))
+        # banner with round avatar on the right
+        banner_box = FloatLayout(size_hint_y=None, height=dp(112))
+        banner = CoverImage(source=prof.get("banner", ""), fallback="panel", size_hint=(1, 1))
+        banner.bind(on_release=lambda *_: app.nav("profile"))
+        banner_box.add_widget(banner)
+        if not banner.has_image():
+            banner_box.add_widget(Label(text="Add your banner in Profile", color=T("sub"), font_size=sp(13),
+                                        size_hint=(None, None), size=(dp(220), dp(30)),
+                                        pos_hint={"x": 0.04, "center_y": 0.5}))
+        avatar = CircleImage(source=prof.get("avatar", ""), letter=prof.get("name", "S"), ring=T("glow"),
+                             size_hint=(None, None), size=(dp(84), dp(84)),
+                             pos_hint={"right": 0.97, "center_y": 0.5})
+        avatar.bind(on_release=lambda *_: app.nav("profile"))
+        banner_box.add_widget(avatar)
+        body.add_widget(banner_box)
+        body.add_widget(Label(text=(prof.get("name") or APP_NAME).upper(), color=T("accent"), bold=True,
+                              font_size=sp(17), size_hint_y=None, height=dp(34)))
+
+        sv, inner = scroll_col(spacing=dp(8), padding=(dp(12), dp(8)))
+        if self.tab == "following":
+            if app.state["logged_in"]:
+                title, sub = "Nothing here yet", "Follow people from the Friends tab to see their posts."
+            else:
+                title, sub = "Nothing here yet", "Log in and follow people to see their posts here."
+        elif self.tab == "stem":
+            title, sub = "No STEM posts yet", "Add the tag stem when you create a post."
+        elif self.search_text:
+            title, sub = "No results", "Try a different search."
+        else:
+            title, sub = "Your feed starts here", "Tap Create to add a photo or video."
+        if self.tab == "foryou" and not self.search_text:
+            inner.add_widget(Wrap(text=HOME_HEADLINE, bold=True, font_size=sp(34), color=T("text"),
+                                  halign="center", valign="middle"))
+        inner.add_widget(Widget(size_hint_y=None, height=dp(14)))
+        inner.add_widget(Wrap(text=title, font_size=sp(24), color=T("sub"), halign="center"))
+        inner.add_widget(Wrap(text=sub, font_size=sp(15), color=T("sub"), halign="center"))
+        inner.add_widget(Widget(size_hint_y=None, height=dp(12)))
+        holder = BoxLayout(size_hint_y=None, height=dp(104))
+        create = NeonPill(text="[size=34sp]+[/size]\nCreate a post", markup=True, active=True, fg=T("text"),
+                          font_size=sp(16), size_hint=(None, None), size=(dp(210), dp(96)))
+        create.bind(on_release=lambda *_: app.open_create_menu())
+        holder.add_widget(Widget())
+        holder.add_widget(create)
+        holder.add_widget(Widget())
+        inner.add_widget(holder)
+        body.add_widget(sv)
+        self.content.add_widget(body)
+
+    def make_page(self, post, pager):
+        """One full-screen post."""
+        app = App.get_running_app()
+        me = app.author_id()
+        page = FloatLayout()
+
+        path = post.get("path", "")
+        if post.get("kind") == "video":
+            media = VideoTile(size_hint=(1, 1))
+            media.bind(on_release=lambda *_, p=path: app.play_video(p))
+        else:
+            media = CoverImage(source=path, fallback="bg", mode=FEED_MODE, size_hint=(1, 1))
+        page.add_widget(media)
+
+        # --- right side, vertical: Like, Comment, Save, Share
+        liked = me in post.get("liked_by", [])
+        saved = app.is_saved(post)
+        count_likes = len(post.get("liked_by", []))
+        count_comments = len(post.get("comments", []))
+        column = BoxLayout(orientation="vertical", size_hint=(None, None),
+                           size=(dp(62), dp(4 * 62 + 3 * 10)), spacing=dp(10),
+                           pos_hint={"right": 0.98, "center_y": 0.42})
+
+        def action(text, active, handler):
+            b = NeonPill(text=text, active=active, font_size=sp(11), size_hint=(None, None),
+                         size=(dp(62), dp(62)))
+            b.bind(on_release=lambda *_: handler())
+            column.add_widget(b)
+
+        def do_like():
+            app.toggle_like(post)
+            pager.refresh_current()
+
+        def do_save():
+            app.toggle_save(post)
+            pager.refresh_current()
+
+        action("Like\n%d" % count_likes, liked, do_like)
+        action("Chat\n%d" % count_comments, False,
+               lambda: app.comments_dialog(post, on_change=pager.refresh_current))
+        action("Saved" if saved else "Save", saved, do_save)
+        action("Share", False, lambda: app.share_post(post))
+        page.add_widget(column)
+
+        # --- bottom left: who posted, caption, tags (sits above the bottom row)
+        author = app.profile(post.get("author"))
+        info = BoxLayout(orientation="vertical", size_hint=(0.68, None), height=dp(132), spacing=dp(4),
+                         padding=dp(8), pos_hint={"x": 0.03, "y": NAV_HEIGHT / max(1.0, Window.height) + 0.02})
+        paint_rgba(info, (0, 0, 0, 0.4), dp(12))
+        head = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(8))
+        head.add_widget(CircleImage(source=author.get("avatar", ""), letter=author.get("name", "S"),
+                                    size_hint=(None, None), size=(dp(34), dp(34))))
+        head.add_widget(LLabel(text=author.get("name", "Sam Ng"), bold=True, font_size=sp(16), color=WHITE))
+        info.add_widget(head)
+        info.add_widget(Wrap(text=post.get("caption", ""), font_size=sp(14), color=WHITE, max_lines=3))
+        tags = [t.strip() for t in post.get("tags", "").split(",") if t.strip()]
+        if tags:
+            info.add_widget(LLabel(text="#" + " #".join(tags), font_size=sp(13), color=T("accent"),
+                                   size_hint_y=None, height=dp(20)))
+        page.add_widget(info)
+        return page
+
+
+# ----------------------------------------------------------------------------
+# FRIENDS + INBOX
+# ----------------------------------------------------------------------------
 class FriendsScreen(ThemedScreen):
     def __init__(self, **kw):
         super().__init__(**kw)
@@ -706,16 +1124,37 @@ class FriendsScreen(ThemedScreen):
         self.rebuild()
 
     def build_ui(self):
+        app = App.get_running_app()
+        me = app.author_id()
         root = BoxLayout(orientation="vertical")
         paint_bg(root)
         self.add_widget(root)
-        
-        content = BoxLayout(orientation="vertical", padding=dp(20), spacing=dp(12))
-        content.add_widget(Widget(size_hint_y=None, height=dp(24)))
-        content.add_widget(Wrap(text="Start adding your friends", bold=True, font_size=sp(24), color=T("text"), halign="center"))
-        content.add_widget(Wrap(text="Connect with others to share experiences and chat securely.", font_size=sp(15), color=T("sub"), halign="center"))
-        content.add_widget(Widget())
-        root.add_widget(content)
+        root.add_widget(plain_title("Friends"))
+        sv, inner = scroll_col(padding=dp(12))
+        others = [(k, u) for k, u in app.state["users"].items() if k != me]
+        if not others:
+            inner.add_widget(Wrap(text="No other accounts yet. When someone else signs up on this phone, "
+                                       "they will show up here so you can follow them.",
+                                  font_size=sp(15), color=T("sub"), halign="center"))
+        following = app.following_of(me)
+        for key, user in others:
+            row = Card(bg="panel", radius=dp(14), outline=True, size_hint_y=None, height=dp(72),
+                       padding=dp(10), spacing=dp(10))
+            row.add_widget(CircleImage(source=user.get("avatar", ""), letter=user.get("name", key),
+                                       size_hint=(None, None), size=(dp(48), dp(48)),
+                                       pos_hint={"center_y": 0.5}))
+            info = BoxLayout(orientation="vertical")
+            info.add_widget(LLabel(text=user.get("name", key), bold=True, font_size=sp(16), color=T("text")))
+            info.add_widget(LLabel(text="@" + key, font_size=sp(13), color=T("sub")))
+            row.add_widget(info)
+            is_following = key in following
+            btn = NeonPill(text="Following" if is_following else "Follow", active=not is_following,
+                           font_size=sp(14), size_hint=(None, None), size=(dp(108), dp(42)),
+                           pos_hint={"center_y": 0.5})
+            btn.bind(on_release=lambda *_, k=key: (app.toggle_follow(k), self.rebuild()))
+            row.add_widget(btn)
+            inner.add_widget(row)
+        root.add_widget(sv)
         root.add_widget(BottomNav(active="friends"))
 
 
@@ -729,250 +1168,70 @@ class InboxScreen(ThemedScreen):
 
     def build_ui(self):
         app = App.get_running_app()
+        me = app.author_id()
         root = BoxLayout(orientation="vertical")
         paint_bg(root)
         self.add_widget(root)
-
-        sv, inner = scroll_col(spacing=dp(10), padding=dp(16))
-        inner.add_widget(Widget(size_hint_y=None, height=dp(10)))
-        
-        messages = app.state.get("inbox_messages", [])
-        if not messages:
-            inner.add_widget(Wrap(text="Your message will appear here", bold=True, font_size=sp(20), color=T("text"), halign="center"))
-            inner.add_widget(Wrap(text="your massage will apear here.", font_size=sp(14), color=T("sub"), halign="center"))
-        else:
-            for msg in messages:
-                card = Card(bg="card", radius=dp(12), outline=True, padding=dp(12), size_hint_y=None, height=dp(70))
-                card.add_widget(LLabel(text=msg.get("sender", "User") + ": " + msg.get("text", ""), color=T("text"), font_size=sp(15)))
-                inner.add_widget(card)
-
+        root.add_widget(plain_title("Inbox"))
+        sv, inner = scroll_col(padding=dp(12))
+        mine = [n for n in app.state["notifications"] if n.get("to") == me]
+        if not app.state["logged_in"]:
+            inner.add_widget(Wrap(text="Log in to receive notifications about likes, comments and followers.",
+                                  font_size=sp(15), color=T("sub"), halign="center"))
+        elif not mine:
+            inner.add_widget(Wrap(text="No notifications yet.", font_size=sp(15), color=T("sub"),
+                                  halign="center"))
+        for n in reversed(mine):
+            row = Card(bg="panel", radius=dp(14), outline=True, orientation="vertical", size_hint_y=None,
+                       height=dp(70), padding=(dp(14), dp(8)))
+            row.add_widget(LLabel(text=n.get("text", ""), font_size=sp(15), color=T("text")))
+            row.add_widget(LLabel(text=ago(n.get("time", time.time())), font_size=sp(12), color=T("sub"),
+                                  size_hint_y=None, height=dp(18)))
+            inner.add_widget(row)
+        if mine:
+            clear = pill("Clear all", height=dp(46))
+            clear.bind(on_release=lambda *_: (app.clear_notifications(), self.rebuild()))
+            inner.add_widget(clear)
         root.add_widget(sv)
+        app.mark_read()
         root.add_widget(BottomNav(active="inbox"))
 
 
-class HomeScreen(ThemedScreen):
+# ----------------------------------------------------------------------------
+# PROFILE
+# ----------------------------------------------------------------------------
+class ButtonBehaviorWidget(ButtonBehavior, Widget):
+    """Invisible full-screen widget that catches taps outside the menu."""
+
+
+class MenuItem(ButtonBehavior, LLabel):
     def __init__(self, **kw):
+        kw.setdefault("size_hint_y", None)
+        kw.setdefault("height", dp(48))
+        kw.setdefault("color", T("text"))
+        kw.setdefault("font_size", sp(16))
+        kw.setdefault("padding_x", dp(14))
         super().__init__(**kw)
-        self.tab = "foryou"
-        self.search_text = ""
-        self.search_open = False
-        self.active_nav_tab = "home"
-        self.build_ui()
-
-    def on_pre_enter(self, *args):
-        self.rebuild()
-
-    def set_tab(self, key):
-        if key == "following":
-            self.tab = "following"
-            self.active_nav_tab = "friends"
-        else:
-            self.tab = key
-            self.active_nav_tab = "home"
-        self.rebuild()
-
-    def toggle_search(self):
-        self.search_open = not self.search_open
-        if not self.search_open:
-            self.search_text = ""
-            self.rebuild()
-            return
-        self.rebuild()
-        Clock.schedule_once(lambda dt: setattr(self.search, "focus", True), 0.15)
-
-    def on_search(self, instance, value):
-        self.search_text = value.strip().lower()
-        self.fill_feed()
-
-    def build_ui(self):
-        app = App.get_running_app()
-        prof = app.profile()
-        root = BoxLayout(orientation="vertical")
-        paint_bg(root)
-        self.add_widget(root)
-
-        if self.search_open:
-            top_bar = BoxLayout(size_hint_y=None, height=dp(56), padding=(dp(8), dp(4)), spacing=dp(8))
-            back_btn = Icon("back", size_hint=(None, 1), width=dp(40))
-            back_btn.bind(on_release=lambda *_: self.toggle_search())
-            top_bar.add_widget(back_btn)
-
-            card, self.search = field("Search posts, people, tags...", text=self.search_text, height=dp(46))
-            self.search.bind(text=self.on_search)
-            top_bar.add_widget(card)
-
-            mic_btn = Icon("mic", color=T("accent"), size_hint=(None, 1), width=dp(40))
-            mic_btn.bind(on_release=lambda *_: app.toast("Listening for voice search..."))
-            top_bar.add_widget(mic_btn)
-            root.add_widget(top_bar)
-
-            self.scroll, self.feed = scroll_col(spacing=dp(14), padding=(dp(12), dp(8)))
-            root.add_widget(self.scroll)
-            self.fill_feed()
-            return
-
-        root.add_widget(Widget(size_hint_y=None, height=dp(16)))
-
-        if self.tab != "foryou":
-            banner_box = FloatLayout(size_hint_y=None, height=dp(220))
-            banner = CoverImage(source=prof.get("banner", ""), fallback="panel", size_hint=(1, 1), pos_hint={"top": 1})
-            banner.bind(on_release=lambda *_: app.nav("profile"))
-            banner_box.add_widget(banner)
-
-            other_users = [u for u in app.state.get("users", {}) if u != app.author_id()]
-            avatar_source = prof.get("avatar", "")
-            avatar_name = prof.get("name") or APP_NAME
-            if other_users:
-                first_friend_key = other_users[0]
-                first_friend_data = app.state["users"][first_friend_key]
-                avatar_source = first_friend_data.get("avatar", "")
-                avatar_name = first_friend_data.get("name", first_friend_key)
-
-            avatar = CircleImage(source=avatar_source, letter=avatar_name, ring=T("glow"),
-                                 size_hint=(None, None), size=(dp(84), dp(84)),
-                                 pos_hint={"right": 0.97, "center_y": 0.4})
-            avatar.bind(on_release=lambda *_: app.nav("profile"))
-            banner_box.add_widget(avatar)
-            root.add_widget(banner_box)
-
-            root.add_widget(Label(text=avatar_name.upper(), color=T("accent"), bold=True,
-                                  font_size=sp(17), size_hint_y=None, height=dp(34)))
-
-        tabs = BoxLayout(size_hint_y=None, height=dp(48), padding=(dp(10), dp(4)), spacing=dp(2))
-        for key, label in (("stem", "STEM"), ("following", "Following"), ("foryou", "For You")):
-            t = TabLabel(label, active=(self.tab == key))
-            t.bind(on_release=lambda *_, k=key: self.set_tab(k))
-            tabs.add_widget(t)
-        s_btn = Icon("search", color=T("sub"), size_hint=(None, 1), width=dp(38))
-        s_btn.bind(on_release=lambda *_: self.toggle_search())
-        p_btn = Icon("plus", color=T("accent"), size_hint=(None, 1), width=dp(38))
-        p_btn.bind(on_release=lambda *_: app.open_create_menu())
-        tabs.add_widget(s_btn)
-        tabs.add_widget(p_btn)
-        root.add_widget(tabs)
-
-        self.scroll, self.feed = scroll_col(spacing=dp(14), padding=(dp(12), dp(8)))
-        root.add_widget(self.scroll)
-        root.add_widget(BottomNav(active=self.active_nav_tab))
-        self.fill_feed()
-
-    def visible_posts(self):
-        app = App.get_running_app()
-        out = []
-        if self.tab == "following":
-            return out
-        for post in app.state["posts"]:
-            tags = post.get("tags", "").lower()
-            if self.tab == "stem" and "stem" not in tags:
-                continue
-            if self.search_text:
-                hay = (post.get("caption", "") + " " + tags + " " + post.get("author", "")).lower()
-                if self.search_text not in hay:
-                    continue
-            out.append(post)
-        return list(reversed(out))
-
-    def fill_feed(self):
-        app = App.get_running_app()
-        self.feed.clear_widgets()
-        posts = self.visible_posts()
-        if posts:
-            for post in posts:
-                self.feed.add_widget(self.make_post_card(post))
-            return
-
-        if self.tab == "following":
-            title, sub = "Nothing here yet", "Posts from people you follow will show up here."
-        elif self.tab == "stem":
-            title, sub = "No STEM posts yet", "Add the tag stem when you create a post."
-        elif self.search_text:
-            title, sub = "No results", "Try a different search."
-        else:
-            title, sub = "Your feed starts here", "Tap Create to add a photo or video."
-
-        if self.tab == "foryou" and not self.search_text:
-            self.feed.add_widget(Wrap(text=HOME_HEADLINE, bold=True, font_size=sp(34), color=T("text"),
-                                      halign="center", valign="middle"))
-        self.feed.add_widget(Widget(size_hint_y=None, height=dp(20)))
-        self.feed.add_widget(Wrap(text=title, font_size=sp(24), color=T("sub"), halign="center"))
-        self.feed.add_widget(Wrap(text=sub, font_size=sp(15), color=T("sub"), halign="center"))
-        self.feed.add_widget(Widget(size_hint_y=None, height=dp(12)))
-        holder = BoxLayout(size_hint_y=None, height=dp(100))
-        create = NeonPill(text="[size=34sp]+[/size]\nCreate a post", markup=True, active=True, fg=T("text"),
-                          font_size=sp(16), size_hint=(None, None), size=(dp(210), dp(96)),
-                          pos_hint={"center_x": 0.5})
-        create.bind(on_release=lambda *_: app.open_create_menu())
-        holder.add_widget(Widget())
-        holder.add_widget(create)
-        holder.add_widget(Widget())
-        self.feed.add_widget(holder)
-
-    def make_post_card(self, post):
-        app = App.get_running_app()
-        card = Card(bg="card", radius=dp(16), outline=True, orientation="vertical", size_hint_y=None,
-                    height=dp(470), padding=dp(10), spacing=dp(8))
-        author = app.profile(post.get("author"))
-        head = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(10))
-        head.add_widget(CircleImage(source=author.get("avatar", ""), letter=author.get("name", "S"),
-                                    size_hint=(None, None), size=(dp(36), dp(36))))
-        head.add_widget(LLabel(text=author.get("name", "Sam Ng"), bold=True, font_size=sp(16), color=T("text")))
-        card.add_widget(head)
-
-        media = FloatLayout()
-        path = post.get("path", "")
-        if post.get("kind") == "video":
-            try:
-                from kivy.uix.video import Video
-                vid = Video(source=path, state="play", options={"eos": "loop"}, size_hint=(1, 1))
-                media.add_widget(vid)
-            except Exception:
-                tile = VideoTile(size_hint=(1, 1))
-                tile.bind(on_release=lambda *_, p=path: app.play_video(p))
-                media.add_widget(tile)
-        else:
-            media.add_widget(CoverImage(source=path, size_hint=(1, 1)))
-
-        actions = BoxLayout(orientation="vertical", size_hint=(None, None), size=(dp(56), dp(184)),
-                            pos_hint={"right": 0.99, "center_y": 0.5}, spacing=dp(8))
-        like = NeonPill(text="Like\n%d" % post.get("likes", 0), active=bool(post.get("liked")),
-                        font_size=sp(11), size_hint=(None, None), size=(dp(56), dp(56)))
-
-        def toggle_like(*_):
-            post["liked"] = not post.get("liked", False)
-            post["likes"] = max(0, post.get("likes", 0) + (1 if post["liked"] else -1))
-            app.save_state()
-            self.fill_feed()
-        like.bind(on_release=toggle_like)
-        comment = NeonPill(text="Chat", font_size=sp(11), size_hint=(None, None), size=(dp(56), dp(56)))
-        comment.bind(on_release=lambda *_: app.toast("Comments coming soon"))
-        share = NeonPill(text="Share", font_size=sp(11), size_hint=(None, None), size=(dp(56), dp(56)))
-        share.bind(on_release=lambda *_: app.toast("Share coming soon"))
-        for b in (like, comment, share):
-            actions.add_widget(b)
-        media.add_widget(actions)
-        card.add_widget(media)
-
-        tags = post.get("tags", "")
-        caption = post.get("caption", "")
-        text = caption + (("\n#" + " #".join(t.strip() for t in tags.split(",") if t.strip())) if tags else "")
-        card.add_widget(Wrap(text=text, font_size=sp(15), color=T("text")))
-        return card
 
 
 class ProfileScreen(ThemedScreen):
-    """Profile screen displaying user information and posts with a three dots vertical working settings menu."""
-
     def __init__(self, **kw):
         super().__init__(**kw)
         self.menu_layer = None
+        self.show = "posts"
         self.build_ui()
 
     def on_pre_enter(self, *args):
         self.rebuild()
 
+    def set_show(self, which):
+        self.show = which
+        self.rebuild()
+
     def build_ui(self):
         app = App.get_running_app()
         prof = app.profile()
+        me = app.author_id()
         self.menu_layer = None
 
         self.layer = FloatLayout()
@@ -981,55 +1240,48 @@ class ProfileScreen(ThemedScreen):
         paint_bg(col)
         self.layer.add_widget(col)
 
-        # Top Bar containing a Back Button and Title
-        top_bar = BoxLayout(size_hint_y=None, height=dp(56), padding=(dp(8), dp(8)), spacing=dp(8))
-        back = Icon("back", size_hint=(None, 1), width=dp(40))
-        back.bind(on_release=lambda *_: app.back())
-        top_bar.add_widget(back)
-        top_bar.add_widget(LLabel(text="Profile", bold=True, font_size=sp(20), color=T("text")))
-        col.add_widget(top_bar)
-
         sv = ScrollView(do_scroll_x=False, bar_width=dp(3))
         content = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(8))
         content.bind(minimum_height=content.setter("height"))
         sv.add_widget(content)
         col.add_widget(sv)
+        col.add_widget(BottomNav(active="profile"))
 
-        # Banner & Avatar Layout
-        header = FloatLayout(size_hint_y=None, height=dp(220))
+        # banner + round photo
+        header = FloatLayout(size_hint_y=None, height=dp(210))
         banner = CoverImage(source=prof.get("banner", ""), fallback="panel", size_hint=(1, None),
-                            height=dp(170), pos_hint={"x": 0, "top": 1})
+                            height=dp(150), pos_hint={"x": 0, "top": 1})
         banner.bind(on_release=lambda *_: app.change_banner())
         header.add_widget(banner)
         if not banner.has_image():
             header.add_widget(Label(text="Tap to add a banner", color=T("sub"), font_size=sp(14),
                                     size_hint=(None, None), size=(dp(200), dp(30)),
-                                    pos_hint={"x": 0.08, "top": 0.9}))
+                                    pos_hint={"center_x": 0.5, "top": 0.9}))
         avatar = CircleImage(source=prof.get("avatar", ""), letter=prof.get("name", "S"), ring=T("glow"),
-                             size_hint=(None, None), size=(dp(100), dp(100)),
-                             pos_hint={"x": 0.65, "y": 0.02})
+                             size_hint=(None, None), size=(dp(104), dp(104)),
+                             pos_hint={"center_x": PROFILE_PHOTO_X, "y": 0.02})
         avatar.bind(on_release=lambda *_: app.change_avatar())
         header.add_widget(avatar)
         content.add_widget(header)
 
         content.add_widget(Label(text=prof.get("name") or "Guest", bold=True, font_size=sp(22),
                                  color=T("text"), size_hint_y=None, height=dp(32)))
-        handle = app.author_id()
-        content.add_widget(Label(text="@" + handle, font_size=sp(14), color=T("sub"),
+        content.add_widget(Label(text="@" + me, font_size=sp(14), color=T("sub"),
                                  size_hint_y=None, height=dp(22)))
 
-        mine = [p for p in app.state["posts"] if p.get("author") == handle]
-        likes = sum(p.get("likes", 0) for p in mine)
+        mine = [p for p in app.state["posts"] if p.get("author") == me]
+        likes = sum(len(p.get("liked_by", [])) for p in mine)
         stats = BoxLayout(size_hint_y=None, height=dp(56))
-        for number, label in ((0, "Following"), (0, "Followers"), (likes, "Likes")):
+        for number, label in ((len(app.following_of(me)), "Following"),
+                              (app.followers_count(me), "Followers"), (likes, "Likes")):
             cell = BoxLayout(orientation="vertical")
             cell.add_widget(Label(text=str(number), bold=True, font_size=sp(18), color=T("text")))
             cell.add_widget(Label(text=label, font_size=sp(12), color=T("sub")))
             stats.add_widget(cell)
         content.add_widget(stats)
 
-        bio = prof.get("bio") or "No bio yet"
-        content.add_widget(Wrap(text=bio, font_size=sp(15), color=T("sub"), halign="center"))
+        content.add_widget(Wrap(text=prof.get("bio") or "No bio yet", font_size=sp(15), color=T("sub"),
+                                halign="center"))
 
         btn_row = BoxLayout(size_hint_y=None, height=dp(52), padding=(dp(40), dp(4)))
         edit = pill("Edit profile", height=dp(44), font_size=sp(15))
@@ -1037,15 +1289,28 @@ class ProfileScreen(ThemedScreen):
         btn_row.add_widget(edit)
         content.add_widget(btn_row)
 
-        content.add_widget(Label(text="Posts", bold=True, font_size=sp(17), color=T("accent"),
-                                 size_hint_y=None, height=dp(30)))
-        if not mine:
-            content.add_widget(Label(text="No posts yet", color=T("sub"), font_size=sp(15),
+        # Posts | Saved
+        switch = BoxLayout(size_hint_y=None, height=dp(40), padding=(dp(60), 0))
+        for key, label in (("posts", "Posts"), ("saved", "Saved")):
+            t = TabLabel(label, active=(self.show == key))
+            t.bind(on_release=lambda *_, k=key: self.set_show(k))
+            switch.add_widget(t)
+        content.add_widget(switch)
+
+        if self.show == "saved":
+            ids = app.state["saved"].get(me, [])
+            shown = [p for p in app.state["posts"] if p.get("id") in ids]
+            empty_text = "Nothing saved yet"
+        else:
+            shown = mine
+            empty_text = "No posts yet"
+        if not shown:
+            content.add_widget(Label(text=empty_text, color=T("sub"), font_size=sp(15),
                                      size_hint_y=None, height=dp(60)))
         else:
             grid = GridLayout(cols=3, spacing=dp(4), padding=dp(8), size_hint_y=None)
             grid.bind(minimum_height=grid.setter("height"))
-            for post in reversed(mine):
+            for post in reversed(shown):
                 if post.get("kind") == "video":
                     tile = VideoTile(size_hint_y=None, height=dp(130))
                 else:
@@ -1053,17 +1318,15 @@ class ProfileScreen(ThemedScreen):
                 tile.bind(on_release=lambda *_, p=post: app.view_post(p))
                 grid.add_widget(tile)
             content.add_widget(grid)
-        content.add_widget(Widget(size_hint_y=None, height=dp(20)))
+        content.add_widget(Widget(size_hint_y=None, height=dp(12)))
 
-        # Three dots icon pinned clearly at the upper-right corner
-        dots = Icon("dots", color=(1, 1, 1, 1), circle_bg=(0, 0, 0, 0.45), size_hint=(None, None),
-                    size=(dp(42), dp(42)), pos_hint={"right": 0.96, "top": 0.98})
+        # three vertical dots (top right) -> settings menu
+        dots = Icon("dots", color=WHITE, circle_bg=(0, 0, 0, 0.45), size_hint=(None, None),
+                    size=(dp(42), dp(42)), pos_hint={"right": 0.97, "top": 0.985})
         dots.bind(on_release=lambda *_: self.open_menu())
         self.layer.add_widget(dots)
 
-    def menu_is_open(self):
-        return self.menu_layer is not None
-
+    # --- three-dot menu -----------------------------------------------------
     def close_menu(self):
         if self.menu_layer is None:
             return False
@@ -1084,14 +1347,13 @@ class ProfileScreen(ThemedScreen):
         rows = 7
         menu = MenuCard(bg="panel", radius=dp(14), outline=True, orientation="vertical",
                         size_hint=(None, None), size=(dp(260), dp(rows * 48 + 16)), padding=dp(8),
-                        pos_hint={"right": 0.96, "top": 0.91})
+                        pos_hint={"right": 0.97, "top": 0.93})
 
         def item(text, action):
             b = MenuItem(text=text)
             b.bind(on_release=lambda *_: (self.close_menu(), action()))
             menu.add_widget(b)
 
-        # Working menu links
         item("Device permissions", app.device_permissions_dialog)
 
         dm = BoxLayout(size_hint_y=None, height=dp(48), padding=(dp(14), 0), spacing=dp(6))
@@ -1115,21 +1377,12 @@ class ProfileScreen(ThemedScreen):
         self.menu_layer = layer
 
 
-class ButtonBehaviorWidget(ButtonBehavior, Widget):
-    pass
-
-
-class MenuItem(ButtonBehavior, LLabel):
-    def __init__(self, **kw):
-        kw.setdefault("size_hint_y", None)
-        kw.setdefault("height", dp(48))
-        kw.setdefault("color", T("text"))
-        kw.setdefault("font_size", sp(16))
-        kw.setdefault("padding_x", dp(14))
-        super().__init__(**kw)
-
-
+# ----------------------------------------------------------------------------
+# APP
+# ----------------------------------------------------------------------------
 class SamNgApp(App):
+
+    # ---- state ------------------------------------------------------------
     def save_state(self):
         self.store.save(self.state)
 
@@ -1145,9 +1398,175 @@ class SamNgApp(App):
             return users[author]
         return self.state["guest_profile"]
 
+    def display_name(self):
+        return self.profile().get("name") or self.author_id()
+
     def authed(self):
         return self.state["logged_in"] or self.state["is_guest"]
 
+    def find_user(self, name):
+        name = name.strip().lower()
+        for key in self.state["users"]:
+            if key.lower() == name:
+                return key
+        return None
+
+    def set_profile_flag(self, key, value):
+        self.profile()[key] = bool(value)
+        self.save_state()
+
+    # ---- social -------------------------------------------------------------
+    def following_of(self, user):
+        return self.state["follows"].get(user, [])
+
+    def followers_count(self, user):
+        return sum(1 for lst in self.state["follows"].values() if user in lst)
+
+    def toggle_follow(self, target):
+        if not self.state["logged_in"]:
+            self.toast("Log in to follow people")
+            return
+        me = self.author_id()
+        lst = self.state["follows"].setdefault(me, [])
+        if target in lst:
+            lst.remove(target)
+            self.toast("Unfollowed")
+        else:
+            lst.append(target)
+            self.notify(target, "%s started following you" % self.display_name())
+            self.toast("Following")
+        self.save_state()
+
+    def can_see(self, post):
+        author = post.get("author", "")
+        me = self.author_id()
+        if author == me:
+            return True
+        if self.profile(author).get("private", False) and author not in self.following_of(me):
+            return False
+        return True
+
+    def notify(self, to, text):
+        users = self.state["users"]
+        if to not in users or to == self.author_id():
+            return
+        if not users[to].get("notify", True):
+            return
+        self.state["notifications"].append({"to": to, "text": text, "time": time.time(), "read": False})
+        self.save_state()
+
+    def unread_count(self):
+        if not self.state["logged_in"]:
+            return 0
+        me = self.author_id()
+        return sum(1 for n in self.state["notifications"] if n.get("to") == me and not n.get("read"))
+
+    def mark_read(self):
+        me = self.author_id()
+        for n in self.state["notifications"]:
+            if n.get("to") == me:
+                n["read"] = True
+        self.save_state()
+
+    def clear_notifications(self):
+        me = self.author_id()
+        self.state["notifications"] = [n for n in self.state["notifications"] if n.get("to") != me]
+        self.save_state()
+
+    def toggle_like(self, post):
+        me = self.author_id()
+        likers = post.setdefault("liked_by", [])
+        if me in likers:
+            likers.remove(me)
+        else:
+            likers.append(me)
+            self.notify(post.get("author"), "%s liked your post" % self.display_name())
+        self.save_state()
+
+    def is_saved(self, post):
+        return post.get("id") in self.state["saved"].get(self.author_id(), [])
+
+    def toggle_save(self, post):
+        lst = self.state["saved"].setdefault(self.author_id(), [])
+        pid = post.get("id")
+        if pid in lst:
+            lst.remove(pid)
+            self.toast("Removed from saved")
+        else:
+            lst.append(pid)
+            self.toast("Saved")
+        self.save_state()
+
+    def share_post(self, post):
+        text = (post.get("caption") or "Check this out") + "\nShared from " + APP_NAME
+        if not ANDROID:
+            self.toast("Sharing works on Android")
+            return
+        try:
+            Intent = autoclass("android.content.Intent")
+            String = autoclass("java.lang.String")
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            intent = Intent()
+            intent.setAction(Intent.ACTION_SEND)
+            intent.putExtra(Intent.EXTRA_TEXT, cast("java.lang.CharSequence", String(text)))
+            intent.setType("text/plain")
+            chooser = Intent.createChooser(intent, cast("java.lang.CharSequence", String("Share via")))
+            PythonActivity.mActivity.startActivity(chooser)
+        except Exception as e:
+            self.toast("Could not share: " + str(e)[:50])
+
+    def comments_dialog(self, post, on_change=None):
+        author = post.get("author")
+        if author != self.author_id() and not self.profile(author).get("allow_comments", True):
+            self.toast("Comments are turned off for this post")
+            return
+        mv = ModalView(size_hint=(0.94, 0.8), background="", background_color=(0, 0, 0, 0),
+                       overlay_color=(0, 0, 0, 0.7))
+        card = Card(bg="panel", radius=dp(18), outline=True, orientation="vertical", padding=dp(12), spacing=dp(8))
+        card.add_widget(Label(text="Comments", bold=True, font_size=sp(20), color=T("accent"),
+                              size_hint_y=None, height=dp(34)))
+        sv, inner = scroll_col(spacing=dp(8), padding=dp(4))
+        card.add_widget(sv)
+
+        def fill():
+            inner.clear_widgets()
+            comments = post.setdefault("comments", [])
+            if not comments:
+                inner.add_widget(Wrap(text="No comments yet. Be the first!", font_size=sp(15),
+                                      color=T("sub"), halign="center"))
+            for c in comments:
+                inner.add_widget(Wrap(text="[b]%s[/b]  %s" % (escape_markup(c.get("name", "")),
+                                                              escape_markup(c.get("text", ""))),
+                                      markup=True, font_size=sp(15), color=T("text")))
+        fill()
+
+        row = BoxLayout(size_hint_y=None, height=dp(52), spacing=dp(8))
+        box, entry = field("Add a comment", height=dp(48))
+        send = NeonPill(text="Send", active=True, font_size=sp(15), size_hint=(None, 1), width=dp(86))
+
+        def do_send(*_):
+            text = entry.text.strip()
+            if not text:
+                return
+            name = self.display_name()
+            post.setdefault("comments", []).append({"author": self.author_id(), "name": name, "text": text})
+            self.notify(author, "%s commented: %s" % (name, text[:40]))
+            entry.text = ""
+            self.save_state()
+            fill()
+        send.bind(on_release=do_send)
+        row.add_widget(box)
+        row.add_widget(send)
+        card.add_widget(row)
+        close = pill("Close", height=dp(46))
+        close.bind(on_release=lambda *_: mv.dismiss())
+        card.add_widget(close)
+        if on_change:
+            mv.bind(on_dismiss=lambda *_: on_change())
+        mv.add_widget(card)
+        mv.open()
+
+    # ---- build ------------------------------------------------------------
     def build(self):
         self.title = "Sam Ng"
         self.store = DataStore(self)
@@ -1161,12 +1580,12 @@ class SamNgApp(App):
 
         self.history = []
         self._pick_cb = None
+        self._photo_uri = None
         sm = ScreenManager(transition=FadeTransition(duration=0.18))
         self.sm = sm
-        
-        sm.add_widget(BootScreen(name="boot"))
         sm.add_widget(WelcomeScreen(name="welcome"))
         sm.add_widget(LoginScreen(name="login"))
+        sm.add_widget(SignupScreen(name="signup"))
         sm.add_widget(TermsScreen(name="terms"))
         sm.add_widget(HomeScreen(name="home"))
         sm.add_widget(FriendsScreen(name="friends"))
@@ -1178,7 +1597,10 @@ class SamNgApp(App):
         sm.add_widget(InfoScreen("Terms and Privacy Policy", lambda: [("Terms and Conditions", TERMS_TEXT),
                                                                     ("Privacy Policy", PRIVACY_TEXT)], name="legal"))
 
-        sm.current = "boot"
+        if self.state["terms_accepted"] and self.authed():
+            sm.current = "home"
+        else:
+            sm.current = "welcome"
 
         Window.bind(on_keyboard=self.on_key)
         if ANDROID:
@@ -1188,12 +1610,7 @@ class SamNgApp(App):
                 pass
         return sm
 
-    def transition_from_boot(self):
-        if self.state["terms_accepted"] and self.authed():
-            self.root_go("home")
-        else:
-            self.root_go("welcome")
-
+    # ---- navigation -------------------------------------------------------
     def go(self, name):
         if self.sm.current != name:
             self.history.append(self.sm.current)
@@ -1204,14 +1621,13 @@ class SamNgApp(App):
         self.sm.current = name
 
     def back(self):
-        if self.sm.has_screen("profile"):
-            prof = self.sm.get_screen("profile")
-            if prof.close_menu():
-                return True
+        prof = self.sm.get_screen("profile")
+        if prof.close_menu():
+            return True
         if self.history:
             self.sm.current = self.history.pop()
             return True
-        if self.sm.current not in ("home", "welcome", "boot"):
+        if self.sm.current not in ("home", "welcome"):
             self.sm.current = "home" if (self.authed() and self.state["terms_accepted"]) else "welcome"
             return True
         self.stop()
@@ -1225,11 +1641,10 @@ class SamNgApp(App):
     def nav(self, name):
         if name == "create":
             self.open_create_menu()
-        elif name in ("home", "friends", "inbox", "profile"):
+        elif name in ("home", "profile", "friends", "inbox"):
             self.root_go(name)
-        else:
-            self.toast("%s coming soon" % name.capitalize())
 
+    # ---- onboarding -------------------------------------------------------
     def skip_sign_in(self):
         self.state["is_guest"] = True
         self.state["logged_in"] = False
@@ -1250,6 +1665,7 @@ class SamNgApp(App):
     def decline_terms(self):
         self.state["is_guest"] = False
         self.state["logged_in"] = False
+        self.state["current_user"] = ""
         self.save_state()
         self.root_go("welcome")
         self.toast("You need to agree to continue")
@@ -1260,11 +1676,9 @@ class SamNgApp(App):
         self.state["current_user"] = ""
         self.save_state()
         self.root_go("welcome")
+        self.toast("Logged out")
 
-    def set_setting(self, key, value):
-        self.state["settings"][key] = bool(value)
-        self.save_state()
-
+    # ---- settings ---------------------------------------------------------
     def set_dark(self, value):
         _mode["dark"] = bool(value)
         self.state["settings"]["dark_mode"] = bool(value)
@@ -1278,15 +1692,15 @@ class SamNgApp(App):
                 screen.rebuild()
 
     def device_permissions_dialog(self):
-        mv = ModalView(size_hint=(0.9, None), height=dp(340), background="", background_color=(0, 0, 0, 0),
+        mv = ModalView(size_hint=(0.9, None), height=dp(300), background="", background_color=(0, 0, 0, 0),
                        overlay_color=(0, 0, 0, 0.65))
         card = Card(bg="panel", radius=dp(18), outline=True, orientation="vertical", padding=dp(16), spacing=dp(10))
         card.add_widget(Label(text="Device permissions", bold=True, font_size=sp(20), color=T("accent"),
                               size_hint_y=None, height=dp(34)))
-        card.add_widget(Wrap(text="This app requires access to your Camera, Microphone, and Photos/Videos "
-                                  "to record, view media, and enable cross-device messaging.", font_size=sp(15), color=T("sub")))
+        card.add_widget(Wrap(text="Allow access to your camera, microphone, photos and videos so you can "
+                                  "record and upload posts.", font_size=sp(15), color=T("sub")))
         card.add_widget(Widget())
-        allow = pill("Grant permissions", primary=True, height=dp(50))
+        allow = pill("Allow access", primary=True, height=dp(50))
         close = pill("Not now", height=dp(46))
 
         def do_allow(*_):
@@ -1312,6 +1726,7 @@ class SamNgApp(App):
         except Exception:
             self.toast("Permissions can only be requested on Android")
 
+    # ---- popups -----------------------------------------------------------
     def toast(self, message):
         mv = ModalView(size_hint=(None, None), size=(dp(300), dp(56)), background="",
                        background_color=(0, 0, 0, 0), overlay_color=(0, 0, 0, 0))
@@ -1319,21 +1734,21 @@ class SamNgApp(App):
         card.add_widget(Label(text=message, color=T("bg"), font_size=sp(14)))
         mv.add_widget(card)
         mv.open()
-        Clock.schedule_once(lambda dt: mv.dismiss(), 1.6)
+        Clock.schedule_once(lambda dt: mv.dismiss(), 1.8)
 
     def open_create_menu(self):
-        mv = ModalView(size_hint=(0.95, 0.85), background="", background_color=(0, 0, 0, 0),
-                       overlay_color=(0, 0, 0, 0.95))
-        card = Card(bg="panel", radius=dp(18), outline=True, orientation="vertical", padding=dp(16), spacing=dp(12))
-        card.add_widget(Label(text="Create Post", bold=True, font_size=sp(22), color=T("accent"),
-                              size_hint_y=None, height=dp(40)))
-        
-        for text, kind in (("Choose a Photo", "image"), ("Choose a Video", "video"), ("Record with Camera", "record")):
-            b = pill(text, height=dp(54))
+        mv = ModalView(size_hint=(0.9, None), height=dp(470), background="", background_color=(0, 0, 0, 0),
+                       overlay_color=(0, 0, 0, 0.65))
+        card = Card(bg="panel", radius=dp(18), outline=True, orientation="vertical", padding=dp(16), spacing=dp(10))
+        card.add_widget(Label(text="Create new post", bold=True, font_size=sp(20), color=T("accent"),
+                              size_hint_y=None, height=dp(36)))
+        for text, kind in (("Take photo (back camera)", "photo"), ("Selfie (front camera)", "selfie"),
+                           ("Record a video", "record"), ("Photo from gallery", "image"),
+                           ("Video from gallery", "video")):
+            b = pill(text, height=dp(50))
             b.bind(on_release=lambda *_, k=kind: (mv.dismiss(), self.pick_media(k, self.new_post_dialog)))
             card.add_widget(b)
-
-        cancel = pill("Close", height=dp(48))
+        cancel = pill("Cancel", height=dp(46))
         cancel.bind(on_release=lambda *_: mv.dismiss())
         card.add_widget(cancel)
         mv.add_widget(card)
@@ -1342,23 +1757,17 @@ class SamNgApp(App):
     def new_post_dialog(self, path):
         ext = os.path.splitext(path)[1].lower()
         kind = "video" if ext in VIDEO_EXTENSIONS else "image"
-        mv = ModalView(size_hint=(1.0, 1.0), background="", background_color=(0, 0, 0, 1), auto_dismiss=False)
-        card = Card(bg="panel", radius=0, orientation="vertical", padding=dp(14), spacing=dp(10))
-        
+        mv = ModalView(size_hint=(0.92, None), height=dp(500), background="", background_color=(0, 0, 0, 0),
+                       overlay_color=(0, 0, 0, 0.7), auto_dismiss=False)
+        card = Card(bg="panel", radius=dp(18), outline=True, orientation="vertical", padding=dp(14), spacing=dp(10))
         if kind == "video":
-            try:
-                from kivy.uix.video import Video
-                card.add_widget(Video(source=path, state="play", options={"eos": "loop"}, size_hint=(1, 1)))
-            except Exception:
-                card.add_widget(VideoTile(size_hint=(1, 1)))
+            card.add_widget(VideoTile(size_hint=(1, 1)))
         else:
-            card.add_widget(CoverImage(source=path, size_hint=(1, 1)))
-
-        cap_card, cap = field("Write a caption...")
+            card.add_widget(CoverImage(source=path, mode="contain", size_hint=(1, 1)))
+        cap_card, cap = field("Write a caption")
         tag_card, tags = field("Tags, e.g. stem, travel")
         card.add_widget(cap_card)
         card.add_widget(tag_card)
-
         row = BoxLayout(size_hint_y=None, height=dp(52), spacing=dp(10))
         cancel = pill("Cancel", height=dp(48))
         post = pill("Post", primary=True, height=dp(48))
@@ -1367,14 +1776,16 @@ class SamNgApp(App):
             self.state["posts"].append({
                 "id": str(int(time.time() * 1000)), "author": self.author_id(), "path": path, "kind": kind,
                 "caption": cap.text.strip() or "New post", "tags": tags.text.strip().lower(),
-                "likes": 0, "liked": False,
+                "liked_by": [], "comments": [],
             })
             self.save_state()
             mv.dismiss()
             self.toast("Posted")
             self.root_go("home")
-            self.sm.get_screen("home").rebuild()
-
+            home = self.sm.get_screen("home")
+            home.tab = "foryou"
+            home.page_index = 0
+            home.rebuild()
         post.bind(on_release=do_post)
         cancel.bind(on_release=lambda *_: mv.dismiss())
         row.add_widget(cancel)
@@ -1434,37 +1845,39 @@ class SamNgApp(App):
         self.pick_media("image", done)
 
     def view_post(self, post):
+        mine = post.get("author") == self.author_id()
         mv = ModalView(size_hint=(0.94, 0.82), background="", background_color=(0, 0, 0, 0),
                        overlay_color=(0, 0, 0, 0.75))
         card = Card(bg="panel", radius=dp(18), outline=True, orientation="vertical", padding=dp(12), spacing=dp(10))
         if post.get("kind") == "video":
-            try:
-                from kivy.uix.video import Video
-                card.add_widget(Video(source=post.get("path", ""), state="play", options={"eos": "loop"}, size_hint=(1, 1)))
-            except Exception:
-                tile = VideoTile(size_hint=(1, 1))
-                tile.bind(on_release=lambda *_: self.play_video(post.get("path", "")))
-                card.add_widget(tile)
+            tile = VideoTile(size_hint=(1, 1))
+            tile.bind(on_release=lambda *_: self.play_video(post.get("path", "")))
+            card.add_widget(tile)
         else:
-            card.add_widget(CoverImage(source=post.get("path", ""), size_hint=(1, 1)))
+            card.add_widget(CoverImage(source=post.get("path", ""), mode="contain", size_hint=(1, 1)))
         card.add_widget(Wrap(text=post.get("caption", ""), font_size=sp(15), color=T("text")))
         row = BoxLayout(size_hint_y=None, height=dp(52), spacing=dp(10))
-        delete = pill("Delete", height=dp(48))
+        second = pill("Delete" if mine else "Unsave", height=dp(48))
         close = pill("Close", primary=True, height=dp(48))
 
-        def do_delete(*_):
-            try:
-                self.state["posts"].remove(post)
-                if os.path.isfile(post.get("path", "")):
-                    os.remove(post["path"])
-            except Exception:
-                pass
+        def do_second(*_):
+            if mine:
+                try:
+                    self.state["posts"].remove(post)
+                    if os.path.isfile(post.get("path", "")):
+                        os.remove(post["path"])
+                except Exception:
+                    pass
+            else:
+                lst = self.state["saved"].get(self.author_id(), [])
+                if post.get("id") in lst:
+                    lst.remove(post["id"])
             self.save_state()
             mv.dismiss()
             self.refresh_all()
-        delete.bind(on_release=do_delete)
+        second.bind(on_release=do_second)
         close.bind(on_release=lambda *_: mv.dismiss())
-        row.add_widget(delete)
+        row.add_widget(second)
         row.add_widget(close)
         card.add_widget(row)
         mv.add_widget(card)
@@ -1479,7 +1892,7 @@ class SamNgApp(App):
             player = Video(source=path, state="play", options={"eos": "loop"})
             box.add_widget(player)
         except Exception:
-            box.add_widget(Label(text="Video playback is not available", color=(1, 1, 1, 1)))
+            box.add_widget(Label(text="Video playback is not available", color=WHITE))
         close = NeonPill(text="Close", active=True, font_size=sp(16), size_hint=(None, None),
                          size=(dp(110), dp(46)), pos_hint={"right": 0.96, "top": 0.97})
 
@@ -1496,35 +1909,100 @@ class SamNgApp(App):
         mv.add_widget(box)
         mv.open()
 
+    # ---- camera / gallery on Android ---------------------------------------
     def pick_media(self, kind, callback):
+        """kind: photo | selfie | record | image | video"""
         if not ANDROID:
-            self.toast("Media picking & Camera capture works on Android")
+            self.toast("Camera and gallery work on Android only")
             return
+        self._pick_cb = callback
+        if kind in ("photo", "selfie"):
+            self.ensure_camera(lambda: self.launch_photo(kind == "selfie"))
+        elif kind == "record":
+            self.ensure_camera(self.launch_video)
+        else:
+            self.launch_gallery(kind)
+
+    def ensure_camera(self, then):
+        try:
+            from android.permissions import check_permission, request_permissions
+            if check_permission("android.permission.CAMERA"):
+                then()
+                return
+
+            def result(perms, grants):
+                Clock.schedule_once(lambda dt: then(), 0)
+            request_permissions(["android.permission.CAMERA"], result)
+        except Exception:
+            then()
+
+    def launch_photo(self, front):
+        try:
+            Intent = autoclass("android.content.Intent")
+            MediaStore = autoclass("android.provider.MediaStore")
+            Media = autoclass("android.provider.MediaStore$Images$Media")
+            ContentValues = autoclass("android.content.ContentValues")
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            resolver = PythonActivity.mActivity.getContentResolver()
+            values = ContentValues()
+            values.put("_display_name", "samng_%d.jpg" % int(time.time() * 1000))
+            values.put("mime_type", "image/jpeg")
+            values.put("relative_path", "Pictures/SamNg")
+            uri = resolver.insert(Media.EXTERNAL_CONTENT_URI, values)
+            if uri is None:
+                raise RuntimeError("could not create photo file")
+            intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, cast("android.os.Parcelable", uri))
+            if front:
+                intent.putExtra("android.intent.extras.CAMERA_FACING", 1)
+                intent.putExtra("android.intent.extras.LENS_FACING_FRONT", 1)
+                intent.putExtra("android.intent.extra.USE_FRONT_CAMERA", True)
+            self._photo_uri = uri
+            PythonActivity.mActivity.startActivityForResult(intent, REQ_PHOTO)
+        except Exception as e:
+            self.toast("Camera error: " + str(e)[:50])
+
+    def launch_video(self):
+        try:
+            Intent = autoclass("android.content.Intent")
+            MediaStore = autoclass("android.provider.MediaStore")
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            intent = Intent(MediaStore.ACTION_VIDEO_CAPTURE)
+            PythonActivity.mActivity.startActivityForResult(intent, REQ_PICK)
+        except Exception as e:
+            self.toast("Camera error: " + str(e)[:50])
+
+    def launch_gallery(self, kind):
         try:
             Intent = autoclass("android.content.Intent")
             PythonActivity = autoclass("org.kivy.android.PythonActivity")
-            if kind == "record":
-                MediaStore = autoclass("android.provider.MediaStore")
-                intent = Intent(MediaStore.ACTION_VIDEO_CAPTURE)
-            else:
-                intent = Intent(Intent.ACTION_GET_CONTENT)
-                intent.setType("video/*" if kind == "video" else "image/*")
-                intent.addCategory(Intent.CATEGORY_OPENABLE)
-            self._pick_cb = callback
+            intent = Intent(Intent.ACTION_GET_CONTENT)
+            intent.setType("video/*" if kind == "video" else "image/*")
+            intent.addCategory(Intent.CATEGORY_OPENABLE)
             PythonActivity.mActivity.startActivityForResult(intent, REQ_PICK)
         except Exception as e:
-            self.toast("Could not open picker: " + str(e)[:60])
+            self.toast("Could not open gallery: " + str(e)[:50])
 
     def on_activity_result(self, request_code, result_code, intent):
-        if request_code != REQ_PICK:
+        if request_code not in (REQ_PICK, REQ_PHOTO):
             return
         callback = self._pick_cb
         self._pick_cb = None
+        photo_uri = self._photo_uri
+        self._photo_uri = None
         try:
-            if result_code != -1 or intent is None or callback is None:
-                return
-            uri = intent.getData()
-            if uri is None:
+            ok = (result_code == -1)           # -1 == RESULT_OK
+            if request_code == REQ_PHOTO:
+                uri = photo_uri if ok else None
+                if not ok and photo_uri is not None:      # cancelled: remove the empty placeholder
+                    try:
+                        PythonActivity = autoclass("org.kivy.android.PythonActivity")
+                        PythonActivity.mActivity.getContentResolver().delete(photo_uri, None, None)
+                    except Exception:
+                        pass
+            else:
+                uri = intent.getData() if (ok and intent is not None) else None
+            if uri is None or callback is None:
                 return
 
             def work():
@@ -1538,6 +2016,7 @@ class SamNgApp(App):
             pass
 
     def copy_uri(self, uri):
+        """Copy a content:// URI into the app's private folder and return the path."""
         try:
             PythonActivity = autoclass("org.kivy.android.PythonActivity")
             resolver = PythonActivity.mActivity.getContentResolver()
@@ -1550,6 +2029,7 @@ class SamNgApp(App):
             os.makedirs(folder, exist_ok=True)
             dest = os.path.join(folder, "m_%d%s" % (int(time.time() * 1000), ext))
 
+            # Method A: buffered read loop
             ok = False
             stream = resolver.openInputStream(uri)
             if stream is None:
@@ -1565,7 +2045,7 @@ class SamNgApp(App):
                         chunk = bytes(buf[:n])
                         if first:
                             first = False
-                            if not any(chunk):
+                            if not any(chunk):      # buffer never filled: method A unsupported
                                 raise RuntimeError("buffer not filled")
                         out.write(chunk)
                 ok = os.path.getsize(dest) > 0
@@ -1577,6 +2057,7 @@ class SamNgApp(App):
                 except Exception:
                     pass
 
+            # Method B: let Android copy it (API 29+)
             if not ok:
                 stream = resolver.openInputStream(uri)
                 FileOutputStream = autoclass("java.io.FileOutputStream")
