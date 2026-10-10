@@ -499,7 +499,7 @@ class BottomNav(BoxLayout):
         app = App.get_running_app()
         for key, label in (("home", "Home"), ("friends", "Friends"), ("create", "Create"), ("inbox", "Inbox")):
             p = NeonPill(text=label, active=(active == key), font_size=sp(14),
-                         size_hint=(1, None), height=dp(44), pos_hint={"center_y": 0.5})
+                         size_hint=(1, None), height=dp(44), pos_hint={"center_y": 0.8})
             p.bind(on_release=lambda *_, k=key: app.nav(k))
             self.add_widget(p)
         prof = app.profile()
@@ -787,7 +787,7 @@ class HomeScreen(ThemedScreen):
                                   font_size=sp(17), size_hint_y=None, height=dp(34)))
 
         # --- tabs: STEM | Following | For You   (search)  (+) placed just below camera/top bar area
-        tabs = BoxLayout(size_hint_y=None, height=dp(52), padding=(dp(10), dp(4)), spacing=dp(2))
+        tabs = BoxLayout(size_hint_y=None, height=dp(48), padding=(dp(10), dp(4)), spacing=dp(2))
         for key, label in (("stem", "STEM"), ("following", "Following"), ("foryou", "For You")):
             t = TabLabel(label, active=(self.tab == key))
             t.bind(on_release=lambda *_, k=key: self.set_tab(k))
