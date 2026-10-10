@@ -1,4 +1,3 @@
-
 import os
 import json
 import time
@@ -525,7 +524,7 @@ class BootScreen(ThemedScreen):
         paint_bg(root)
         self.add_widget(root)
 
-        # Center logo image matching your uploaded design file named logo.png[span_1](start_span)[span_1](end_span)
+        # Center logo image matching your uploaded design file named logo.png
         logo_img = CoverImage(
             source="logo.png",
             size_hint=(None, None),
@@ -767,7 +766,27 @@ class HomeScreen(ThemedScreen):
         paint_bg(root)
         self.add_widget(root)
 
-        # --- tabs: STEM | Following | For You   (search)  (+)
+        # --- top banner layout (disappears when on Home screen)
+        if self.tab != "foryou" or self.search_open:
+            banner_box = FloatLayout(size_hint_y=None, height=dp(112))
+            banner = CoverImage(source=prof.get("banner", ""), fallback="panel", size_hint=(1, 1))
+            banner.bind(on_release=lambda *_: app.nav("profile"))
+            banner_box.add_widget(banner)
+            if not banner.has_image():
+                banner_box.add_widget(Label(text="Add your banner in Profile", color=T("sub"), font_size=sp(13),
+                                            size_hint=(None, None), size=(dp(220), dp(30)),
+                                            pos_hint={"x": 0.04, "center_y": 0.5}))
+            avatar = CircleImage(source=prof.get("avatar", ""), letter=prof.get("name", "S"), ring=T("glow"),
+                                 size_hint=(None, None), size=(dp(84), dp(84)),
+                                 pos_hint={"right": 0.97, "center_y": 0.5})
+            avatar.bind(on_release=lambda *_: app.nav("profile"))
+            banner_box.add_widget(avatar)
+            root.add_widget(banner_box)
+
+            root.add_widget(Label(text=(prof.get("name") or APP_NAME).upper(), color=T("accent"), bold=True,
+                                  font_size=sp(17), size_hint_y=None, height=dp(34)))
+
+        # --- tabs: STEM | Following | For You   (search)  (+) placed just below camera/top bar area
         tabs = BoxLayout(size_hint_y=None, height=dp(52), padding=(dp(10), dp(4)), spacing=dp(2))
         for key, label in (("stem", "STEM"), ("following", "Following"), ("foryou", "For You")):
             t = TabLabel(label, active=(self.tab == key))
@@ -789,28 +808,11 @@ class HomeScreen(ThemedScreen):
             row.add_widget(card)
             root.add_widget(row)
 
-        # --- banner with round avatar on the right
-        banner_box = FloatLayout(size_hint_y=None, height=dp(112))
-        banner = CoverImage(source=prof.get("banner", ""), fallback="panel", size_hint=(1, 1))
-        banner.bind(on_release=lambda *_: app.nav("profile"))
-        banner_box.add_widget(banner)
-        if not banner.has_image():
-            banner_box.add_widget(Label(text="Add your banner in Profile", color=T("sub"), font_size=sp(13),
-                                        size_hint=(None, None), size=(dp(220), dp(30)),
-                                        pos_hint={"x": 0.04, "center_y": 0.5}))
-        avatar = CircleImage(source=prof.get("avatar", ""), letter=prof.get("name", "S"), ring=T("glow"),
-                             size_hint=(None, None), size=(dp(84), dp(84)),
-                             pos_hint={"right": 0.97, "center_y": 0.5})
-        avatar.bind(on_release=lambda *_: app.nav("profile"))
-        banner_box.add_widget(avatar)
-        root.add_widget(banner_box)
-
-        root.add_widget(Label(text=(prof.get("name") or APP_NAME).upper(), color=T("accent"), bold=True,
-                              font_size=sp(17), size_hint_y=None, height=dp(34)))
-
-        # --- feed
+        # --- feed (Full screen expansion)
         self.scroll, self.feed = scroll_col(spacing=dp(14), padding=(dp(12), dp(8)))
         root.add_widget(self.scroll)
+        
+        # --- Bottom navigation bar with create/actions pinned right above it
         root.add_widget(BottomNav(active="home"))
         self.fill_feed()
 
@@ -941,7 +943,7 @@ class ProfileScreen(ThemedScreen):
         col.add_widget(sv)
         col.add_widget(BottomNav(active="profile"))
 
-        # banner + round photo
+        # banner + round photo (avatar shifted towards the right side as requested: x=0.65)
         header = FloatLayout(size_hint_y=None, height=dp(210))
         banner = CoverImage(source=prof.get("banner", ""), fallback="panel", size_hint=(1, None),
                             height=dp(150), pos_hint={"x": 0, "top": 1})
@@ -950,10 +952,10 @@ class ProfileScreen(ThemedScreen):
         if not banner.has_image():
             header.add_widget(Label(text="Tap to add a banner", color=T("sub"), font_size=sp(14),
                                     size_hint=(None, None), size=(dp(200), dp(30)),
-                                    pos_hint={"center_x": 0.5, "top": 0.9}))
+                                    pos_hint={"x": 0.08, "top": 0.9}))
         avatar = CircleImage(source=prof.get("avatar", ""), letter=prof.get("name", "S"), ring=T("glow"),
                              size_hint=(None, None), size=(dp(104), dp(104)),
-                             pos_hint={"center_x": 0.5, "y": 0.02})
+                             pos_hint={"x": 0.65, "y": 0.02})
         avatar.bind(on_release=lambda *_: app.change_avatar())
         header.add_widget(avatar)
         content.add_widget(header)
@@ -1537,4 +1539,3 @@ class SamNgApp(App):
 
 if __name__ == "__main__":
     SamNgApp().run()
-
