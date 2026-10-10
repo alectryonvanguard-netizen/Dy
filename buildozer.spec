@@ -9,7 +9,7 @@ source.include_exts = py,kv,png,jpg,jpeg,atlas,mp4,webp
 # MAIN ENTRY POINT - Run Main.py (the full app)
 source.main = Main
 
-version = 1.0.1
+version = 1.0.2
 requirements = python3,kivy,plyer,pyjnius,requests
 
 orientation = portrait
