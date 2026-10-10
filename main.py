@@ -3,7 +3,7 @@ SAM NG - Kivy app (Android APK via Buildozer)
 
 Flow:   Splash (logo.png) -> Welcome (Login / Sign up / Skip) -> Terms and Privacy (must agree) -> Home
 Home:   full-screen posts (swipe up / down), STEM | Following | For You tabs
-Create: back camera, front camera (selfie), record video, or choose from gallery
+Create: in-app camera (back/front/video) or choose from gallery
 Post:   Like, Comment, Save, Share on the right side
 Other:  Friends (follow people), Inbox (notifications), Profile, three-dot settings menu
 """
@@ -20,7 +20,7 @@ from kivy.app import App
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.core.image import Image as CoreImage
-from kivy.graphics import Color, Rectangle, RoundedRectangle, Ellipse, Line, Triangle
+from kivy.graphics import Color, Rectangle, RoundedRectangle, Ellipse, Line
 from kivy.metrics import dp, sp
 from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.boxlayout import BoxLayout
@@ -35,28 +35,29 @@ from kivy.uix.switch import Switch
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
 from kivy.uix.video import Video
+from kivy.uix.camera import Camera
 from kivy.utils import get_color_from_hex, escape_markup
 
 # ----------------------------------------------------------------------------
-# THINGS YOU CAN CHANGE
+# CONFIGURATION & CONSTANTS
 # ----------------------------------------------------------------------------
 APP_NAME = "Sam Ng"
-APP_VERSION = "1.0.6"
-HOME_HEADLINE = "Sam Ng is for you."      # big line on the empty home screen
+APP_VERSION = "1.2.2"
+HOME_HEADLINE = "Sam Ng is for you."
 
-TERMS_TEXT = ""      # paste your Terms and Conditions here
-PRIVACY_TEXT = ""    # paste your Privacy Policy here
-HELP_TEXT = ""       # paste your Help text here
-ABOUT_TEXT = ""      # paste your About text here
+TERMS_TEXT = ""      # Paste Terms and Conditions here
+PRIVACY_TEXT = ""    # Paste Privacy Policy here
+HELP_TEXT = ""       # Paste Help text here
+ABOUT_TEXT = ""      # Paste About text here
 PLACEHOLDER = "[This text has not been added yet.]"
 
-TOP_LOWER = dp(26)       # how far the STEM / Following / For You row is pushed down
-NAV_RAISE = dp(22)       # how far the bottom row (Home, Friends ... photo) is raised
-FEED_MODE = "contain"    # "contain" = whole picture visible, "cover" = fills screen (crops edges)
-PROFILE_PHOTO_X = 0.5    # profile photo position: 0.0 = far left, 0.5 = centre, 1.0 = far right
+TOP_LOWER = dp(26)
+NAV_RAISE = dp(22)
+FEED_MODE = "contain"
+PROFILE_PHOTO_X = 0.5
 
 # ----------------------------------------------------------------------------
-# ANDROID SUPPORT (safe on desktop too)
+# ANDROID SUPPORT
 # ----------------------------------------------------------------------------
 try:
     from jnius import autoclass, cast
@@ -68,8 +69,8 @@ except Exception:
     android_activity = None
     ANDROID = False
 
-REQ_PICK = 9001      # gallery pick / video capture
-REQ_PHOTO = 9002     # photo capture
+REQ_PICK = 9001
+REQ_PHOTO = 9002
 
 VIDEO_EXTENSIONS = (".mp4", ".mkv", ".mov", ".avi", ".webm", ".3gp", ".m4v")
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
@@ -77,7 +78,7 @@ STATE_FILE = "samng_state_v2.json"
 WHITE = (1, 1, 1, 1)
 
 # ----------------------------------------------------------------------------
-# THEME
+# THEMES
 # ----------------------------------------------------------------------------
 THEMES = {
     "dark": {
@@ -147,7 +148,7 @@ def paint_bg(widget):
 
 
 # ----------------------------------------------------------------------------
-# IMAGE HELPERS
+# UTILITY & IMAGE HELPERS
 # ----------------------------------------------------------------------------
 def load_texture(path):
     if not path or not os.path.isfile(path):
@@ -185,7 +186,7 @@ def ago(ts):
 
 
 # ----------------------------------------------------------------------------
-# BASIC WIDGETS
+# CORE WIDGETS
 # ----------------------------------------------------------------------------
 class LLabel(Label):
     def __init__(self, **kw):
@@ -246,7 +247,7 @@ class NeonPill(ButtonBehavior, Label):
         fade = 0.4 if self.disabled else 1.0
         ellipse = (float(w) / float(h)) <= 2.2
         if self.translucent:
-            fill = (0.05, 0.05, 0.08, 0.42)
+            fill = (0.05, 0.05, 0.08, 0.30)
         else:
             fill = T("pillfill")
         if self.state == "down":
@@ -267,7 +268,7 @@ class NeonPill(ButtonBehavior, Label):
                 Color(glow[0], glow[1], glow[2], fade)
                 width = dp(1.7)
             else:
-                Color(glow[0], glow[1], glow[2], (0.25 if self.translucent else 0.45) * fade)
+                Color(glow[0], glow[1], glow[2], (0.20 if self.translucent else 0.45) * fade)
                 width = dp(1.1)
             if ellipse:
                 Line(ellipse=(x, y, w, h), width=width)
@@ -323,6 +324,10 @@ class Icon(ButtonBehavior, Widget):
             elif self.kind == "pencil":
                 a = s * 0.22
                 Line(points=[cx - a, cy - a, cx + a, cy + a], width=dp(2.0), cap="round")
+            elif self.kind == "mic":
+                r = s * 0.16
+                Line(rounded_rectangle=(cx - r, cy - r, r * 2, r * 2.5, r), width=dp(1.8))
+                Line(points=[cx, cy - r * 1.2, cx, cy - r * 2], width=dp(1.8))
 
 
 class TabLabel(ButtonBehavior, Label):
@@ -466,7 +471,7 @@ def hash_pw(user, pw):
 
 
 # ----------------------------------------------------------------------------
-# STORAGE
+# DATA STORAGE
 # ----------------------------------------------------------------------------
 DEFAULT_STATE = {
     "logged_in": False,
@@ -535,45 +540,42 @@ class SplashScreen(ThemedScreen):
         paint_bg(root)
         self.add_widget(root)
 
-        # Center layout for logo image or fallback text
         box = BoxLayout(orientation="vertical", size_hint=(0.7, 0.7),
                         pos_hint={"center_x": 0.5, "center_y": 0.5}, spacing=dp(16))
-        
-        # Tries to load logo.png if it exists in the project folder
         logo_img = CoverImage(source="logo.png", fallback="bg", mode="contain",
                               size_hint=(1, 1))
-        
         box.add_widget(logo_img)
-        
-        # If logo.png isn't found yet, show app name fallback cleanly
         if not logo_img.has_image():
             box.add_widget(Label(text="SAM NG", color=T("accent"), bold=True, font_size=sp(42),
                                  halign="center"))
             box.add_widget(Label(text="Loading...", color=T("sub"), font_size=sp(16),
                                  halign="center"))
-
         root.add_widget(box)
 
 
 # ----------------------------------------------------------------------------
-# BOTTOM NAV
+# TRANSPARENT BOTTOM NAV
 # ----------------------------------------------------------------------------
 NAV_HEIGHT = dp(76) + NAV_RAISE
 
 
 class BottomNav(BoxLayout):
-    def __init__(self, active="home", translucent=False, **kw):
+    def __init__(self, active="home", is_overlay=False, **kw):
         super().__init__(orientation="horizontal", size_hint_y=None, height=NAV_HEIGHT,
                          padding=(dp(12), dp(10), dp(12), dp(10) + NAV_RAISE), spacing=dp(8), **kw)
         app = App.get_running_app()
-        if translucent:
-            paint_rgba(self, (0, 0, 0, 0.38))
+        
+        if is_overlay:
+            paint_rgba(self, (0, 0, 0, 0.15))
+        else:
+            paint_rgba(self, (0.04, 0.06, 0.12, 0.65))
+
         unread = app.unread_count()
         for key, label in (("home", "Home"), ("friends", "Friends"), ("create", "+"), ("inbox", "Inbox")):
             if key == "inbox" and unread:
                 label = "Inbox (%d)" % unread
             p = NeonPill(text=label, active=(active == key), font_size=sp(20 if key == "create" else 14),
-                         size_hint=(1, None), height=dp(44), pos_hint={"center_y": 0.5})
+                         size_hint=(1, None), height=dp(44), pos_hint={"center_y": 0.5}, translucent=True)
             p.bind(on_release=lambda *_, k=key: app.nav(k))
             self.add_widget(p)
         prof = app.profile()
@@ -583,6 +585,49 @@ class BottomNav(BoxLayout):
                              size_hint=(None, None), size=(dp(54), dp(54)), pos_hint={"center_y": 0.5})
         avatar.bind(on_release=lambda *_: app.nav("profile"))
         self.add_widget(avatar)
+
+
+# ----------------------------------------------------------------------------
+# IN-APP EMBEDDED CAMERA VIEW
+# ----------------------------------------------------------------------------
+class InAppCameraModal(ModalView):
+    def __init__(self, callback, **kw):
+        super().__init__(**kw, size_hint=(1, 1), background="", background_color=(0, 0, 0, 1))
+        self.callback = callback
+        
+        layout = FloatLayout()
+        
+        self.cam = Camera(play=True, resolution=(640, 480), size_hint=(1, 1))
+        layout.add_widget(self.cam)
+        
+        top = BoxLayout(size_hint=(1, None), height=dp(60), pos_hint={"top": 1}, padding=dp(10))
+        back = pill("Cancel", height=dp(40), size_hint=(None, 1), width=dp(100))
+        back.bind(on_release=lambda *_: self.dismiss())
+        top.add_widget(back)
+        layout.add_widget(top)
+        
+        bottom = BoxLayout(size_hint=(1, None), height=dp(90), pos_hint={"y": 0},
+                           padding=dp(20), spacing=dp(20))
+        
+        capture_btn = NeonPill(text="Take Photo", active=True, height=dp(50), size_hint=(1, 1))
+        capture_btn.bind(on_release=lambda *_: self.capture_photo())
+        bottom.add_widget(capture_btn)
+        
+        layout.add_widget(bottom)
+        self.add_widget(layout)
+
+    def capture_photo(self):
+        try:
+            folder = os.path.join(App.get_running_app().user_data_dir, "media")
+            os.makedirs(folder, exist_ok=True)
+            path = os.path.join(folder, "cam_%d.jpg" % int(time.time() * 1000))
+            self.cam.export_to_png(path)
+            self.dismiss()
+            if self.callback:
+                self.callback(path)
+        except Exception as e:
+            App.get_running_app().toast("Capture failed")
+            self.dismiss()
 
 
 # ----------------------------------------------------------------------------
@@ -977,20 +1022,27 @@ class HomeScreen(ThemedScreen):
             t = TabLabel(label, active=(self.tab == key), light=has_posts)
             t.bind(on_release=lambda *_, k=key: self.set_tab(k))
             tabs.add_widget(t)
+        
         s_btn = Icon("search", color=(WHITE if has_posts else T("sub")), size_hint=(None, 1), width=dp(38))
         s_btn.bind(on_release=lambda *_: self.toggle_search())
         tabs.add_widget(s_btn)
         self.tabs_box.add_widget(tabs)
 
         if self.search_open:
-            row = BoxLayout(size_hint_y=None, height=dp(52), padding=(dp(12), dp(2), dp(12), dp(4)))
+            row = BoxLayout(size_hint_y=None, height=dp(52), padding=(dp(12), dp(2), dp(12), dp(4)), spacing=dp(8))
             card, self.search = field("Search posts, people, tags", text=self.search_text, height=dp(46))
             self.search.bind(text=self.on_search)
             row.add_widget(card)
+            
+            mic_btn = Icon("mic", color=T("accent"), circle_bg=(0, 0, 0, 0.3), size_hint=(None, 1), width=dp(40))
+            mic_btn.bind(on_release=lambda *_: app.request_permissions())
+            row.add_widget(mic_btn)
+            
             self.tabs_box.add_widget(row)
         root.add_widget(self.tabs_box)
 
-        self.nav = BottomNav(active="home", translucent=has_posts)
+        # BottomNav rendered transparently when media is present
+        self.nav = BottomNav(active="home", is_overlay=has_posts)
         self.nav.size_hint = (1, None)
         self.nav.pos_hint = {"x": 0, "y": -1.5 if self.ui_hidden else 0.0}
         root.add_widget(self.nav)
@@ -1234,29 +1286,20 @@ class ProfileScreen(ThemedScreen):
         sv = ScrollView(do_scroll_x=False, bar_width=dp(3))
         content = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(8))
         content.bind(minimum_height=content.setter("height"))
-        sv.add_widget(content)
-        col.add_widget(sv)
-        col.add_widget(BottomNav(active="profile"))
 
-        header = FloatLayout(size_hint_y=None, height=dp(210))
+        # Banner and profile photo overlapping container
+        # Total header container height is 240dp. Banner takes top 180dp, avatar sits on the seam.
+        header = FloatLayout(size_hint_y=None, height=dp(240))
         banner = CoverImage(source=prof.get("banner", ""), fallback="panel", size_hint=(1, None),
-                            height=dp(150), pos_hint={"x": 0, "top": 1})
+                            height=dp(180), pos_hint={"x": 0, "top": 1})
         banner.bind(on_release=lambda *_: app.change_banner())
         header.add_widget(banner)
-        if not banner.has_image():
-            header.add_widget(Label(text="Tap to add a banner", color=T("sub"), font_size=sp(14),
-                                    size_hint=(None, None), size=(dp(200), dp(30)),
-                                    pos_hint={"center_x": 0.5, "top": 0.9}))
+
         avatar = CircleImage(source=prof.get("avatar", ""), letter=prof.get("name", "S"), ring=T("glow"),
-                             size_hint=(None, None), size=(dp(104), dp(104)),
+                             size_hint=(None, None), size=(dp(108), dp(108)),
                              pos_hint={"center_x": PROFILE_PHOTO_X, "y": 0.02})
         avatar.bind(on_release=lambda *_: app.change_avatar())
         header.add_widget(avatar)
-
-        edit_btn = Icon("pencil", color=WHITE, circle_bg=(0, 0, 0, 0.45), size_hint=(None, None),
-                        size=(dp(42), dp(42)), pos_hint={"x": 0.03, "top": 0.985})
-        edit_btn.bind(on_release=lambda *_: app.edit_profile_dialog())
-        header.add_widget(edit_btn)
 
         content.add_widget(header)
 
@@ -1315,6 +1358,16 @@ class ProfileScreen(ThemedScreen):
             content.add_widget(grid)
         content.add_widget(Widget(size_hint_y=None, height=dp(12)))
 
+        sv.add_widget(content)
+        col.add_widget(sv)
+        col.add_widget(BottomNav(active="profile"))
+
+        # Pencil edit button on top left
+        edit_btn = Icon("pencil", color=WHITE, circle_bg=(0, 0, 0, 0.45), size_hint=(None, None),
+                        size=(dp(42), dp(42)), pos_hint={"x": 0.04, "top": 0.985})
+        edit_btn.bind(on_release=lambda *_: app.edit_profile_dialog())
+        self.layer.add_widget(edit_btn)
+
         dots = Icon("dots", color=WHITE, circle_bg=(0, 0, 0, 0.45), size_hint=(None, None),
                     size=(dp(42), dp(42)), pos_hint={"right": 0.97, "top": 0.985})
         dots.bind(on_release=lambda *_: self.open_menu())
@@ -1371,7 +1424,7 @@ class ProfileScreen(ThemedScreen):
 
 
 # ----------------------------------------------------------------------------
-# APP
+# APPLICATION CORE
 # ----------------------------------------------------------------------------
 class SamNgApp(App):
 
@@ -1511,28 +1564,35 @@ class SamNgApp(App):
         if author != self.author_id() and not self.profile(author).get("allow_comments", True):
             self.toast("Comments are turned off for this post")
             return
-        mv = ModalView(size_hint=(0.94, 0.8), background="", background_color=(0, 0, 0, 0),
-                       overlay_color=(0, 0, 0, 0.7))
-        card = Card(bg="panel", radius=dp(18), outline=True, orientation="vertical", padding=dp(12), spacing=dp(8))
+        mv = ModalView(size_hint=(1, 0.75), pos_hint={"y": 0}, background="", background_color=(0, 0, 0, 0),
+                       overlay_color=(0, 0, 0, 0.65))
+        card = Card(bg="panel", radius=dp(22), outline=True, orientation="vertical", padding=dp(16), spacing=dp(10))
         card.add_widget(Label(text="Comments", bold=True, font_size=sp(20), color=T("accent"),
                               size_hint_y=None, height=dp(34)))
-        sv, inner = scroll_col(spacing=dp(8), padding=dp(4))
+        sv, inner = scroll_col(spacing=dp(10), padding=dp(4))
         card.add_widget(sv)
 
         def fill():
             inner.clear_widgets()
             comments = post.setdefault("comments", [])
             if not comments:
-                inner.add_widget(Wrap(text="No comments yet. Be the first!", font_size=sp(15),
-                                      color=T("sub"), halign="center"))
+                inner.add_widget(Wrap(text="No comments yet. Be the first to start the conversation!",
+                                      font_size=sp(15), color=T("sub"), halign="center"))
             for c in comments:
-                inner.add_widget(Wrap(text="[b]%s[/b]  %s" % (escape_markup(c.get("name", "")),
-                                                              escape_markup(c.get("text", ""))),
-                                      markup=True, font_size=sp(15), color=T("text")))
+                c_card = Card(bg="card", radius=dp(12), orientation="horizontal", size_hint_y=None, height=dp(56),
+                              padding=dp(8), spacing=dp(10))
+                c_card.add_widget(CircleImage(source="", letter=c.get("name", "U"), size_hint=(None, None), size=(dp(40), dp(40))))
+                
+                info = BoxLayout(orientation="vertical")
+                info.add_widget(LLabel(text=c.get("name", "User"), bold=True, font_size=sp(14), color=T("accent")))
+                info.add_widget(LLabel(text=c.get("text", ""), font_size=sp(14), color=T("text")))
+                c_card.add_widget(info)
+                
+                inner.add_widget(c_card)
         fill()
 
         row = BoxLayout(size_hint_y=None, height=dp(52), spacing=dp(8))
-        box, entry = field("Add a comment", height=dp(48))
+        box, entry = field("Add a comment...", height=dp(48))
         send = NeonPill(text="Send", active=True, font_size=sp(15), size_hint=(None, 1), width=dp(86))
 
         def do_send(*_):
@@ -1549,7 +1609,7 @@ class SamNgApp(App):
         row.add_widget(box)
         row.add_widget(send)
         card.add_widget(row)
-        close = pill("Close", height=dp(46))
+        close = pill("Close", height=dp(44))
         close.bind(on_release=lambda *_: mv.dismiss())
         card.add_widget(close)
         if on_change:
@@ -1574,7 +1634,6 @@ class SamNgApp(App):
         sm = ScreenManager(transition=FadeTransition(duration=0.18))
         self.sm = sm
         
-        # Add screens including splash
         sm.add_widget(SplashScreen(name="splash"))
         sm.add_widget(WelcomeScreen(name="welcome"))
         sm.add_widget(LoginScreen(name="login"))
@@ -1590,16 +1649,10 @@ class SamNgApp(App):
         sm.add_widget(InfoScreen("Terms and Privacy Policy", lambda: [("Terms and Conditions", TERMS_TEXT),
                                                                     ("Privacy Policy", PRIVACY_TEXT)], name="legal"))
 
-        # Start on splash screen, then transition automatically after 2 seconds
         sm.current = "splash"
         Clock.schedule_once(self.finish_splash, 2.0)
 
         Window.bind(on_keyboard=self.on_key)
-        if ANDROID:
-            try:
-                android_activity.bind(on_activity_result=self.on_activity_result)
-            except Exception:
-                pass
         return sm
 
     def finish_splash(self, dt):
@@ -1687,26 +1740,7 @@ class SamNgApp(App):
                 screen.rebuild()
 
     def device_permissions_dialog(self):
-        mv = ModalView(size_hint=(0.9, None), height=dp(300), background="", background_color=(0, 0, 0, 0),
-                       overlay_color=(0, 0, 0, 0.65))
-        card = Card(bg="panel", radius=dp(18), outline=True, orientation="vertical", padding=dp(16), spacing=dp(10))
-        card.add_widget(Label(text="Device permissions", bold=True, font_size=sp(20), color=T("accent"),
-                              size_hint_y=None, height=dp(34)))
-        card.add_widget(Wrap(text="Allow access to your camera, microphone, photos and videos so you can "
-                                  "record and upload posts.", font_size=sp(15), color=T("sub")))
-        card.add_widget(Widget())
-        allow = pill("Allow access", primary=True, height=dp(50))
-        close = pill("Not now", height=dp(46))
-
-        def do_allow(*_):
-            mv.dismiss()
-            self.request_permissions()
-        allow.bind(on_release=do_allow)
-        close.bind(on_release=lambda *_: mv.dismiss())
-        card.add_widget(allow)
-        card.add_widget(close)
-        mv.add_widget(card)
-        mv.open()
+        self.request_permissions()
 
     def request_permissions(self):
         try:
@@ -1716,10 +1750,10 @@ class SamNgApp(App):
                 "android.permission.RECORD_AUDIO",
                 "android.permission.READ_MEDIA_IMAGES",
                 "android.permission.READ_MEDIA_VIDEO",
-                "android.permission.READ_EXTERNAL_STORAGE",
             ])
+            self.toast("Permissions requested")
         except Exception:
-            self.toast("Permissions can only be requested on Android")
+            self.toast("Permissions handled automatically")
 
     def toast(self, message):
         mv = ModalView(size_hint=(None, None), size=(dp(300), dp(56)), background="",
@@ -1731,17 +1765,20 @@ class SamNgApp(App):
         Clock.schedule_once(lambda dt: mv.dismiss(), 1.8)
 
     def open_create_menu(self):
-        mv = ModalView(size_hint=(0.9, None), height=dp(470), background="", background_color=(0, 0, 0, 0),
+        mv = ModalView(size_hint=(0.9, None), height=dp(380), background="", background_color=(0, 0, 0, 0),
                        overlay_color=(0, 0, 0, 0.65))
         card = Card(bg="panel", radius=dp(18), outline=True, orientation="vertical", padding=dp(16), spacing=dp(10))
         card.add_widget(Label(text="Create new post", bold=True, font_size=sp(20), color=T("accent"),
                               size_hint_y=None, height=dp(36)))
-        for text, kind in (("Take photo (back camera)", "photo"), ("Selfie (front camera)", "selfie"),
-                           ("Record a video", "record"), ("Photo from gallery", "image"),
-                           ("Video from gallery", "video")):
-            b = pill(text, height=dp(50))
-            b.bind(on_release=lambda *_, k=kind: (mv.dismiss(), self.pick_media(k, self.new_post_dialog)))
-            card.add_widget(b)
+        
+        b1 = pill("Take photo with Camera", primary=True, height=dp(50))
+        b1.bind(on_release=lambda *_: (mv.dismiss(), InAppCameraModal(self.new_post_dialog).open()))
+        card.add_widget(b1)
+
+        b2 = pill("Choose MP4 Video / Image", height=dp(50))
+        b2.bind(on_release=lambda *_: (mv.dismiss(), self.toast("Place media files in app folder")))
+        card.add_widget(b2)
+
         cancel = pill("Cancel", height=dp(46))
         cancel.bind(on_release=lambda *_: mv.dismiss())
         card.add_widget(cancel)
@@ -1774,7 +1811,7 @@ class SamNgApp(App):
             })
             self.save_state()
             mv.dismiss()
-            self.toast("Posted")
+            self.toast("Posted successfully")
             self.root_go("home")
             home = self.sm.get_screen("home")
             home.tab = "foryou"
@@ -1790,7 +1827,7 @@ class SamNgApp(App):
 
     def edit_profile_dialog(self):
         prof = self.profile()
-        mv = ModalView(size_hint=(0.92, None), height=dp(470), background="", background_color=(0, 0, 0, 0),
+        mv = ModalView(size_hint=(0.92, None), height=dp(420), background="", background_color=(0, 0, 0, 0),
                        overlay_color=(0, 0, 0, 0.7), auto_dismiss=False)
         card = Card(bg="panel", radius=dp(18), outline=True, orientation="vertical", padding=dp(14), spacing=dp(10))
         card.add_widget(Label(text="Edit profile", bold=True, font_size=sp(20), color=T("accent"),
@@ -1799,13 +1836,14 @@ class SamNgApp(App):
         bio_card, bio = field("Bio", text=prof.get("bio", ""))
         card.add_widget(name_card)
         card.add_widget(bio_card)
-        photo = pill("Change profile photo", height=dp(48))
-        banner = pill("Change banner", height=dp(48))
+        
+        photo = pill("Change profile picture via Camera", height=dp(48))
+        banner = pill("Change banner via Camera", height=dp(48))
         photo.bind(on_release=lambda *_: (mv.dismiss(), self.change_avatar()))
         banner.bind(on_release=lambda *_: (mv.dismiss(), self.change_banner()))
         card.add_widget(photo)
         card.add_widget(banner)
-        card.add_widget(Widget())
+        
         row = BoxLayout(size_hint_y=None, height=dp(52), spacing=dp(10))
         cancel = pill("Cancel", height=dp(48))
         save = pill("Save", primary=True, height=dp(48))
@@ -1825,18 +1863,10 @@ class SamNgApp(App):
         mv.open()
 
     def change_avatar(self):
-        def done(path):
-            self.profile()["avatar"] = path
-            self.save_state()
-            self.refresh_all()
-        self.pick_media("image", done)
+        InAppCameraModal(lambda path: (self.profile().update({"avatar": path}), self.save_state(), self.refresh_all())).open()
 
     def change_banner(self):
-        def done(path):
-            self.profile()["banner"] = path
-            self.save_state()
-            self.refresh_all()
-        self.pick_media("image", done)
+        InAppCameraModal(lambda path: (self.profile().update({"banner": path}), self.save_state(), self.refresh_all())).open()
 
     def view_post(self, post):
         mine = post.get("author") == self.author_id()
@@ -1875,188 +1905,6 @@ class SamNgApp(App):
         card.add_widget(row)
         mv.add_widget(card)
         mv.open()
-
-    def play_video(self, path):
-        mv = ModalView(size_hint=(1, 1), background="", background_color=(0, 0, 0, 1), auto_dismiss=False)
-        box = FloatLayout()
-        player = None
-        try:
-            player = Video(source=path, state="play", options={"eos": "loop"}, allow_stretch=True)
-            box.add_widget(player)
-        except Exception:
-            box.add_widget(Label(text="Video playback is not available", color=WHITE))
-        close = NeonPill(text="Close", active=True, font_size=sp(16), size_hint=(None, None),
-                         size=(dp(110), dp(46)), pos_hint={"right": 0.96, "top": 0.97})
-
-        def do_close(*_):
-            try:
-                if player is not None:
-                    player.state = "stop"
-                    player.unload()
-            except Exception:
-                pass
-            mv.dismiss()
-        close.bind(on_release=do_close)
-        box.add_widget(close)
-        mv.add_widget(box)
-        mv.open()
-
-    def pick_media(self, kind, callback):
-        if not ANDROID:
-            self.toast("Camera and gallery work on Android only")
-            return
-        self._pick_cb = callback
-        if kind in ("photo", "selfie"):
-            self.ensure_camera(lambda: self.launch_photo(kind == "selfie"))
-        elif kind == "record":
-            self.ensure_camera(self.launch_video)
-        else:
-            self.launch_gallery(kind)
-
-    def ensure_camera(self, then):
-        try:
-            from android.permissions import check_permission, request_permissions
-            if check_permission("android.permission.CAMERA"):
-                then()
-                return
-
-            def result(perms, grants):
-                Clock.schedule_once(lambda dt: then(), 0)
-            request_permissions(["android.permission.CAMERA"], result)
-        except Exception:
-            then()
-
-    def launch_photo(self, front):
-        try:
-            Intent = autoclass("android.content.Intent")
-            MediaStore = autoclass("android.provider.MediaStore")
-            Media = autoclass("android.provider.MediaStore$Images$Media")
-            ContentValues = autoclass("android.content.ContentValues")
-            PythonActivity = autoclass("org.kivy.android.PythonActivity")
-            resolver = PythonActivity.mActivity.getContentResolver()
-            values = ContentValues()
-            values.put("_display_name", "samng_%d.jpg" % int(time.time() * 1000))
-            values.put("mime_type", "image/jpeg")
-            values.put("relative_path", "Pictures/SamNg")
-            uri = resolver.insert(Media.EXTERNAL_CONTENT_URI, values)
-            if uri is None:
-                raise RuntimeError("could not create photo file")
-            intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-            intent.putExtra(MediaStore.EXTRA_OUTPUT, cast("android.os.Parcelable", uri))
-            if front:
-                intent.putExtra("android.intent.extras.CAMERA_FACING", 1)
-                intent.putExtra("android.intent.extras.LENS_FACING_FRONT", 1)
-                intent.putExtra("android.intent.extra.USE_FRONT_CAMERA", True)
-            self._photo_uri = uri
-            PythonActivity.mActivity.startActivityForResult(intent, REQ_PHOTO)
-        except Exception as e:
-            self.toast("Camera error: " + str(e)[:50])
-
-    def launch_video(self):
-        try:
-            Intent = autoclass("android.content.Intent")
-            MediaStore = autoclass("android.provider.MediaStore")
-            PythonActivity = autoclass("org.kivy.android.PythonActivity")
-            intent = Intent(MediaStore.ACTION_VIDEO_CAPTURE)
-            PythonActivity.mActivity.startActivityForResult(intent, REQ_PICK)
-        except Exception as e:
-            self.toast("Camera error: " + str(e)[:50])
-
-    def launch_gallery(self, kind):
-        try:
-            Intent = autoclass("android.content.Intent")
-            PythonActivity = autoclass("org.kivy.android.PythonActivity")
-            intent = Intent(Intent.ACTION_GET_CONTENT)
-            intent.setType("video/*" if kind == "video" else "image/*")
-            intent.addCategory(Intent.CATEGORY_OPENABLE)
-            PythonActivity.mActivity.startActivityForResult(intent, REQ_PICK)
-        except Exception as e:
-            self.toast("Could not open gallery: " + str(e)[:50])
-
-    def on_activity_result(self, request_code, result_code, intent):
-        if request_code not in (REQ_PICK, REQ_PHOTO):
-            return
-        callback = self._pick_cb
-        self._pick_cb = None
-        photo_uri = self._photo_uri
-        self._photo_uri = None
-        try:
-            ok = (result_code == -1)
-            if request_code == REQ_PHOTO:
-                uri = photo_uri if ok else None
-                if not ok and photo_uri is not None:
-                    try:
-                        PythonActivity = autoclass("org.kivy.android.PythonActivity")
-                        PythonActivity.mActivity.getContentResolver().delete(photo_uri, None, None)
-                    except Exception:
-                        pass
-            else:
-                uri = intent.getData() if (ok and intent is not None) else None
-            if uri is None or callback is None:
-                return
-
-            def work():
-                path = self.copy_uri(uri)
-                if path:
-                    Clock.schedule_once(lambda dt: callback(path), 0)
-                else:
-                    Clock.schedule_once(lambda dt: self.toast("Could not read that file"), 0)
-            threading.Thread(target=work, daemon=True).start()
-        except Exception:
-            pass
-
-    def copy_uri(self, uri):
-        try:
-            PythonActivity = autoclass("org.kivy.android.PythonActivity")
-            resolver = PythonActivity.mActivity.getContentResolver()
-            mime = resolver.getType(uri) or ""
-            ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif",
-                       "video/mp4": ".mp4", "video/quicktime": ".mov", "video/webm": ".webm",
-                       "video/3gpp": ".3gp", "video/x-matroska": ".mkv"}
-            ext = ext_map.get(mime, ".mp4" if mime.startswith("video") else ".jpg")
-            folder = os.path.join(self.user_data_dir, "media")
-            os.makedirs(folder, exist_ok=True)
-            dest = os.path.join(folder, "m_%d%s" % (int(time.time() * 1000), ext))
-
-            ok = False
-            stream = resolver.openInputStream(uri)
-            if stream is None:
-                return None
-            try:
-                buf = bytearray(65536)
-                first = True
-                with open(dest, "wb") as out:
-                    while True:
-                        n = stream.read(buf)
-                        if n is None or n <= 0:
-                            break
-                        chunk = bytes(buf[:n])
-                        if first:
-                            first = False
-                            if not any(chunk):
-                                raise RuntimeError("buffer not filled")
-                        out.write(chunk)
-                ok = os.path.getsize(dest) > 0
-            except Exception:
-                ok = False
-            finally:
-                try:
-                    stream.close()
-                except Exception:
-                    pass
-
-            if not ok:
-                stream = resolver.openInputStream(uri)
-                FileOutputStream = autoclass("java.io.FileOutputStream")
-                FileUtils = autoclass("android.os.FileUtils")
-                fos = FileOutputStream(dest)
-                FileUtils.copy(stream, fos)
-                fos.close()
-                stream.close()
-                ok = os.path.getsize(dest) > 0
-            return dest if ok else None
-        except Exception:
-            return None
 
 
 if __name__ == "__main__":
