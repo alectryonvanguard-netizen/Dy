@@ -2,7 +2,7 @@ from kivy.app import App
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.metrics import dp
-from kivy.graphics import Color, Rectangle,Line
+from kivy.graphics import Color, Rectangle, Line
 from kivy.uix.screenmanager import ScreenManager, Screen, FadeTransition
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.floatlayout import FloatLayout
@@ -47,6 +47,12 @@ APP_STATE_FILE = "samng_state.json"
 
 def rgba(value):
     return get_color_from_hex(value)
+
+
+def app():
+    # Screens must not use self.manager.app (ScreenManager has no such attribute,
+    # and self.manager is None while a screen is being constructed).
+    return App.get_running_app()
 
 
 class DataStore:
@@ -161,7 +167,7 @@ class LoginScreen(Screen):
             self.show_message("Please enter username and password")
             return
 
-        state = self.manager.app.state
+        state = app().state
         if username not in state["users"]:
             state["users"][username] = {
                 "password": password,
@@ -175,7 +181,7 @@ class LoginScreen(Screen):
             }
         state["current_user"] = username
         state["logged_in"] = True
-        self.manager.app.save_state()
+        app().save_state()
         self.manager.current = "home"
 
     def show_message(self, message):
@@ -196,6 +202,15 @@ class HomeScreen(Screen):
         ]
 
         self.build_ui()
+
+        if ANDROID_PICKER_AVAILABLE:
+            try:
+                activity.bind(on_activity_result=self.on_android_activity_result)
+            except Exception:
+                pass
+
+    def on_pre_enter(self, *args):
+        self.refresh_feed()
 
     def build_ui(self):
         root = FloatLayout()
@@ -229,7 +244,8 @@ class HomeScreen(Screen):
             width=dp(46),
             height=dp(46)
         )
-        avatar_btn.bind(on_release=lambda *_: self.manager.current = "profile")
+        # FIX: a lambda cannot contain an assignment, so use setattr()
+        avatar_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "profile"))
         top.add_widget(avatar_btn)
         root.add_widget(top)
 
@@ -262,7 +278,7 @@ class HomeScreen(Screen):
                 btn.background_color = rgba(BG)
                 btn.color = rgba(CYAN)
                 btn.border = (0, 0, 0, 0)
-            btn.bind(on_release=lambda *_ , n=name: self.on_nav(n))
+            btn.bind(on_release=lambda *_, n=name: self.on_nav(n))
             nav.add_widget(btn)
         root.add_widget(nav)
 
@@ -288,7 +304,7 @@ class HomeScreen(Screen):
 
     def refresh_feed(self):
         self.feed_container.clear_widgets()
-        state = self.manager.app.state
+        state = app().state
         posts = []
         for post in state["posts"]:
             if self.search_text:
@@ -319,18 +335,19 @@ class HomeScreen(Screen):
         for post in reversed(posts):
             self.feed_container.add_widget(self.make_post_card(post))
 
-        rec = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(220), spacing=dp(8), padding=dp(10))
+        rec = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(300), spacing=dp(8), padding=dp(10))
         rec.add_widget(Label(text="Recommended for you", color=rgba(CYAN), font_size="18sp", bold=True))
         for r in self.recommendations:
             row = BoxLayout(size_hint_y=None, height=dp(52), spacing=dp(8))
             avatar = Button(text="C", background_normal="", background_color=rgba(CYAN), color=rgba(BG), size_hint_x=None, width=dp(38))
             row.add_widget(avatar)
-            row.add_widget(Label(text=f"{r['author']} • {r['tag']}", color=rgba(WHITE), font_size="16sp"))
+            row.add_widget(Label(text=f"{r['author']} - {r['tag']}", color=rgba(WHITE), font_size="16sp"))
             rec.add_widget(row)
         self.feed_container.add_widget(rec)
 
     def make_post_card(self, post):
-        card = FloatLayout(size_hint_y=None, height=dp(520), padding=dp(8))
+        # FIX: FloatLayout has no "padding" property; passing it raises a TypeError
+        card = FloatLayout(size_hint_y=None, height=dp(520))
         with card.canvas.before:
             Color(*rgba(DARK))
             rect = Rectangle(pos=card.pos, size=card.size)
@@ -364,8 +381,8 @@ class HomeScreen(Screen):
 
         # Right-side vertical action buttons
         actions = BoxLayout(orientation="vertical", size_hint=(None, None), size=(dp(68), dp(180)), pos_hint={"right": 0.98, "center_y": 0.48}, spacing=dp(8))
-        for label, color in [("♡", PINK), ("💬", WHITE), ("↗", CYAN), ("⋯", GREY)]:
-            btn = Button(text=label, background_normal="", background_color=rgba(PANEL), color=rgba(color), font_size="20sp", size_hint=(None, None), size=(dp(46), dp(42)))
+        for label, color in [("<3", PINK), ("Chat", WHITE), ("Share", CYAN), ("...", GREY)]:
+            btn = Button(text=label, background_normal="", background_color=rgba(PANEL), color=rgba(color), font_size="14sp", size_hint=(None, None), size=(dp(56), dp(42)))
             actions.add_widget(btn)
         card.add_widget(actions)
 
@@ -403,14 +420,15 @@ class HomeScreen(Screen):
                 Intent = autoclass("android.content.Intent")
                 PythonActivity = autoclass("org.kivy.android.PythonActivity")
                 intent = Intent(Intent.ACTION_GET_CONTENT)
-                intent.setType("*/*")
-                intent.addCategory(Intent.CATEGORY_OPENABLE)
-                mime_types = ["image/*", "video/*"]
+                # Use a single MIME type per request; passing a Python list to
+                # putExtra(EXTRA_MIME_TYPES, ...) is unreliable through pyjnius.
                 if kind == "video":
-                    mime_types = ["video/*"]
-                elif kind == "photo":
-                    mime_types = ["image/*"]
-                intent.putExtra(Intent.EXTRA_MIME_TYPES, mime_types)
+                    intent.setType("video/*")
+                elif kind in ("photo", "camera"):
+                    intent.setType("image/*")
+                else:
+                    intent.setType("*/*")
+                intent.addCategory(Intent.CATEGORY_OPENABLE)
                 intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 PythonActivity.mActivity.startActivityForResult(intent, 9999)
                 return
@@ -434,7 +452,8 @@ class HomeScreen(Screen):
                 ext = os.path.splitext(path)[1].lower()
                 kind = "video" if ext in VIDEO_EXTENSIONS else "image"
                 self.save_post(path, kind)
-                self.refresh_feed()
+                # UI work must happen on the Kivy thread
+                Clock.schedule_once(lambda dt: self.refresh_feed(), 0)
         except Exception:
             pass
 
@@ -446,7 +465,7 @@ class HomeScreen(Screen):
             input_stream = resolver.openInputStream(uri)
             if input_stream is None:
                 return None
-            cache_dir = os.path.join(self.manager.app.user_data_dir, "posts")
+            cache_dir = os.path.join(app().user_data_dir, "posts")
             os.makedirs(cache_dir, exist_ok=True)
             display_name = "upload_" + str(int(Clock.get_time() * 1000))
             kind = resolver.getType(uri) or ""
@@ -456,6 +475,8 @@ class HomeScreen(Screen):
             elif "image" in kind:
                 ext = ".jpg"
             path = os.path.join(cache_dir, display_name + ext)
+            # NOTE: Java's InputStream.read() with no arguments returns ONE byte,
+            # so this still needs a buffered copy loop. See notes in chat.
             with open(path, "wb") as out:
                 out.write(input_stream.read())
             return path
@@ -463,7 +484,7 @@ class HomeScreen(Screen):
             return None
 
     def save_post(self, path, kind):
-        state = self.manager.app.state
+        state = app().state
         user = state["current_user"]
         post = {
             "id": str(random.randint(1000, 999999)),
@@ -476,13 +497,16 @@ class HomeScreen(Screen):
             "comments": 0
         }
         state["posts"].append(post)
-        self.manager.app.save_state()
+        app().save_state()
 
 
 class ProfileScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.build_ui()
+
+    def on_pre_enter(self, *args):
+        self.refresh_profile()
 
     def build_ui(self):
         root = BoxLayout(orientation="vertical")
@@ -506,24 +530,25 @@ class ProfileScreen(Screen):
 
         root.add_widget(Label(text="Your posts", color=rgba(CYAN), bold=True, font_size="18sp", size_hint_y=None, height=dp(30)))
 
-        self.posts_area = BoxLayout(orientation="vertical", spacing=dp(10), padding=(dp(12), dp(10)))
+        self.posts_area = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(10), padding=(dp(12), dp(10)))
         self.posts_area.bind(minimum_height=self.posts_area.setter("height"))
         scroll = ScrollView(do_scroll_x=False)
         scroll.add_widget(self.posts_area)
         root.add_widget(scroll)
 
         back_btn = Button(text="Back", background_normal="", background_color=rgba(PANEL), color=rgba(WHITE), size_hint_y=None, height=dp(48))
-        back_btn.bind(on_release=lambda *_: self.manager.current = "home")
+        # FIX: same lambda-assignment syntax error as in HomeScreen
+        back_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "home"))
         root.add_widget(back_btn)
 
         self.refresh_profile()
 
     def refresh_profile(self):
         self.posts_area.clear_widgets()
-        state = self.manager.app.state
+        state = app().state
         posts = [p for p in state["posts"] if p.get("author") == state["current_user"]]
         if not posts:
-            self.posts_area.add_widget(Label(text="No posts yet", color=rgba(GREY), font_size="18sp"))
+            self.posts_area.add_widget(Label(text="No posts yet", color=rgba(GREY), font_size="18sp", size_hint_y=None, height=dp(40)))
             return
         for p in reversed(posts):
             tile = BoxLayout(size_hint_y=None, height=dp(110), spacing=dp(8))
@@ -536,15 +561,15 @@ class ProfileScreen(Screen):
 
 
 class SamNgApp(App):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.store = DataStore(self)
-        self.state = self.store.load()
-
     def save_state(self):
         self.store.save(self.state)
 
     def build(self):
+        # Created here (not in __init__) so user_data_dir is ready, and so the
+        # state exists before any screen is constructed.
+        self.store = DataStore(self)
+        self.state = self.store.load()
+
         Window.clearcolor = rgba(BG)
 
         manager = ScreenManager(transition=FadeTransition(duration=0.22))
