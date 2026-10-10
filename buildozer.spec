@@ -8,7 +8,7 @@ source.dir = .
 source.include_exts = py,kv,png,jpg,jpeg,atlas,mp4,webp
 
 version = 1.0.0
-requirements = python3,kivy,plyer,pyjnius
+requirements = python3.11,kivy,plyer,pyjnius
 
 orientation = portrait
 fullscreen = 0
@@ -23,6 +23,8 @@ android.archs = arm64-v8a
 android.accept_sdk_license = True
 
 p4a.bootstrap = sdl2
+p4a.branch = stable
+
 [buildozer]
 
 log_level = 2
