@@ -16,7 +16,7 @@ orientation = portrait
 fullscreen = 0
 
 # App Icon
-android.icon = icon.png
+android.icon = icon.png 
 
 android.permissions = INTERNET,READ_MEDIA_IMAGES,READ_MEDIA_VIDEO,READ_EXTERNAL_STORAGE
 
