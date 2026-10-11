@@ -10,9 +10,7 @@ source.include_exts = py,kv,png,jpg,jpeg,atlas,mp4,webp
 source.main = main.py
 
 version = 1.1.2
-requirements = python3,kivy,plyer,pyjnius,ffpyplayer
-
-
+requirements = python3,kivy,plyer,pyjnius,ffmpeg,ffpyplayer
 
 orientation = portrait
 fullscreen = 0
