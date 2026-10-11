@@ -7,16 +7,16 @@ source.dir = .
 source.include_exts = py,kv,png,jpg,jpeg,atlas,mp4,webp
 
 # MAIN ENTRY POINT - Run Main.py (the full app)
-source.main = Main
+source.main = main.py
 
-version = 1.0.2
+version = 1.1.2
 requirements = python3,kivy,plyer,pyjnius,requests
 
 orientation = portrait
 fullscreen = 0
 
 # App Icon
-android.icon = icon.png 
+icon.filename = %(source.dir)s/icon.png
 
 android.permissions = INTERNET,READ_MEDIA_IMAGES,READ_MEDIA_VIDEO,READ_EXTERNAL_STORAGE
 
