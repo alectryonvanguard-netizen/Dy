@@ -20,6 +20,7 @@ import threading
 
 from kivy.animation import Animation
 from kivy.app import App
+from kivy.uix.videoplayer import VideoPlayer
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.core.image import Image as CoreImage
