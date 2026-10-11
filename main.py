@@ -7,23 +7,16 @@ import json
 import time
 import shutil
 import hashlib
-import threading
-import urllib.request
-import urllib.error
-
-# NEXOVARA AI CONFIGURATION: paste your Gemini API key between the quotes.
-# For local testing only. Never publish a real API key in a public GitHub repository.
-NEXOVARA_API_KEY = "PASTE_YOUR_GEMINI_API_KEY_HERE"
-NEXOVARA_MODEL = "gemini-2.5-flash"
-NEXOVARA_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 from kivy.app import App
 from kivy.clock import Clock
 from kivy.animation import Animation
 from kivy.core.window import Window
+from kivy.core.image import Image as CoreImage
 from kivy.metrics import dp
 from kivy.utils import get_color_from_hex
-from kivy.graphics import Color, RoundedRectangle, Rectangle, Line, Ellipse
+from kivy.graphics import (Color, RoundedRectangle, Rectangle, Line, Ellipse,
+                           StencilPush, StencilUse, StencilUnUse, StencilPop)
 from kivy.uix.screenmanager import ScreenManager, Screen, FadeTransition
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.gridlayout import GridLayout
@@ -37,6 +30,7 @@ from kivy.uix.video import Video
 from kivy.uix.widget import Widget
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.popup import Popup
+from kivy.uix.modalview import ModalView
 from kivy.uix.slider import Slider
 from kivy.uix.switch import Switch
 from kivy.uix.filechooser import FileChooserListView
@@ -68,35 +62,6 @@ YELLOW = "#FFC857"
 VIDEO_EXTENSIONS = (".mp4", ".mkv", ".mov", ".avi", ".webm", ".3gp", ".m4v")
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
 ALL_MEDIA = IMAGE_EXTENSIONS + VIDEO_EXTENSIONS
-
-PRIVACY_POLICY = """SAM NG — PRIVACY POLICY
-Last updated: 11 October 2026
-
-1. About SAM NG
-SAM NG is currently a local prototype social app. Login and sign-up in this version are demonstrations stored on this device and are not verified by a secure online account service.
-
-2. Information the app handles
-Depending on the features you use, SAM NG may store a username, profile information, app settings, captions, posts, drafts, comments, likes, saved items, search history, and media or documents you choose to import. The app uses Android's system picker so you choose individual photos or videos rather than granting access to your entire photo library.
-
-3. How information is used
-This prototype uses locally stored information to show your profile, posts, settings, drafts, comments, saved items, search history, and trash-bin entries. Imported media is copied into the app's private storage so it can be displayed later.
-
-4. Uploading and sharing
-This prototype does not upload posts to a SAM NG server. Online publishing, cloud synchronisation, real friend messaging, and server-based account services are not connected. If those services are added, this policy must be updated to explain what is sent, to whom, and why before public release.
-
-5. Permissions and your choices
-Android may ask for permission when you use a feature such as the camera. When selecting media, you can cancel without choosing anything. You can review or change app permissions in Android Settings. You can delete content within the app where deletion controls are provided. Uninstalling the app normally removes its private app data, but exported or separately shared copies may remain elsewhere.
-
-6. Storage and security
-Imported files and app data are kept in the app's private storage on this device. Protect your device with its screen lock. No app can guarantee absolute security. Items in the app's trash feature may remain until they are permanently removed by the app.
-
-7. Children and personal information
-Do not post personal information or content you do not have permission to share. Because online accounts and online publishing are not connected in this prototype, it does not currently operate an online social service through a SAM NG server.
-
-8. Contact and policy updates
-A public release should include a monitored developer contact email and a stable public URL for this policy. This policy must be updated if SAM NG adds online accounts, server uploads, analytics, advertising, or other data-processing services.
-
-Important: This policy describes the current local prototype only. The developer must review it against the final app and any services actually connected before publishing it."""
 
 SEVEN_DAYS_SEC = 7 * 24 * 3600
 THIRTY_DAYS_SEC = 30 * 24 * 3600
@@ -186,6 +151,27 @@ class NeonButton(Button):
                      width=1.1)
 
 
+class RoundedClip(FloatLayout):
+    """Clip child widgets to a rounded rectangle (used for the profile banner)."""
+    def __init__(self, radius=18, **kwargs):
+        super().__init__(**kwargs)
+        self.radius_dp = radius
+        with self.canvas.before:
+            StencilPush()
+            self._clip_shape = RoundedRectangle(pos=self.pos, size=self.size,
+                                                radius=[dp(radius)] * 4)
+            StencilUse()
+        with self.canvas.after:
+            StencilUnUse()
+            StencilPop()
+        self.bind(pos=self._update_clip, size=self._update_clip)
+
+    def _update_clip(self, *_):
+        self._clip_shape.pos = self.pos
+        self._clip_shape.size = self.size
+        self._clip_shape.radius = [dp(self.radius_dp)] * 4
+
+
 class BootScreen(Screen):
     """Welcome / Splash Screen"""
     def __init__(self, **kwargs):
@@ -199,18 +185,18 @@ class BootScreen(Screen):
                   size=lambda w, v: setattr(rect, "size", v))
 
         if os.path.isfile("logo.png"):
-            logo = Image(source="logo.png", size_hint=(None, None), size=(dp(120), dp(120)),
-                         pos_hint={"center_x": .5, "center_y": .56})
+            logo = Image(source="logo.png", size_hint=(None, None), size=(dp(150), dp(150)),
+                         pos_hint={"center_x": .5, "center_y": .61})
             root.add_widget(logo)
         else:
             root.add_widget(Label(text="[b]SAM NG[/b]", markup=True, color=rgba(CYAN),
-                                  font_size="40sp", size_hint=(1, .3),
-                                  pos_hint={"center_x": .5, "center_y": .56}))
+                                  font_size="46sp", size_hint=(1, .3),
+                                  pos_hint={"center_x": .5, "center_y": .61}))
 
         root.add_widget(Label(text="YOUR WORLD. YOUR SPACE.",
                               color=rgba(PURPLE), font_size="12sp",
                               size_hint=(1, .05),
-                              pos_hint={"center_x": .5, "center_y": .37}))
+                              pos_hint={"center_x": .5, "center_y": .40}))
         self.progress = 0
         Clock.schedule_interval(self.advance, .035)
 
@@ -238,7 +224,7 @@ class AuthScreen(Screen):
         root.bind(pos=lambda w, v: setattr(rect, "pos", v), size=lambda w, v: setattr(rect, "size", v))
         self.add_widget(root)
 
-        box = BoxLayout(orientation="vertical", spacing=dp(20), size_hint=(0.86, None), height=dp(410),
+        box = BoxLayout(orientation="vertical", spacing=dp(14), size_hint=(0.85, None), height=dp(360),
                         pos_hint={"center_x": .5, "center_y": .5})
 
         box.add_widget(Label(text="Welcome to SAM NG", color=rgba(CYAN), font_size="22sp", bold=True, size_hint_y=None, height=dp(36)))
@@ -248,9 +234,7 @@ class AuthScreen(Screen):
         self.pass_input = RoundedInput(hint_text="Password", password=True, multiline=False, size_hint_y=None, height=dp(48))
 
         box.add_widget(self.user_input)
-        box.add_widget(Widget(size_hint_y=None, height=dp(6)))
         box.add_widget(self.pass_input)
-        box.add_widget(Widget(size_hint_y=None, height=dp(4)))
 
         btn_row = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(10))
         login_btn = NeonButton(text="Log In", outline=CYAN, color=rgba(CYAN))
@@ -262,19 +246,63 @@ class AuthScreen(Screen):
         btn_row.add_widget(login_btn)
         btn_row.add_widget(signup_btn)
         box.add_widget(btn_row)
+        skip_btn = NeonButton(text="Skip for now", outline="#343440", color=rgba(GREY),
+                              size_hint_y=None, height=dp(42))
+        skip_btn.bind(on_release=self.skip_auth)
+        box.add_widget(skip_btn)
+        # Keep the form in the visible area when the Android keyboard opens.
+        self._auth_root = root
+        self._auth_box = box
+        root.bind(size=self._keep_auth_visible)
         root.add_widget(box)
+
+    def _keep_auth_visible(self, *_):
+        # below_target handles keyboard movement; this keeps the form centered
+        # in whatever usable height Android leaves after opening the keyboard.
+        if hasattr(self, "_auth_box"):
+            self._auth_box.pos_hint = {"center_x": .5, "center_y": .54}
+
+    def skip_auth(self, *_):
+        app = App.get_running_app()
+        home = self.manager.get_screen("home")
+        home.is_logged_in = False
+        app.is_logged_in = False
+        if not home.username:
+            home.username = "guest"
+        self.manager.current = "home"
+        home.show_feed()
 
     def _finish_auth(self, username):
         """Synchronize app and HomeScreen state and save through the correct object."""
         app = App.get_running_app()
         home = self.manager.get_screen("home")
-        clean_username = username.replace(" ", "")
+        clean_username = username.strip().lstrip("@").replace(" ", "")[:30]
+        if not clean_username:
+            home.message("Username required", "Enter a username to continue.")
+            return False
+        # This is a local-device limit, not online authentication: one account
+        # name is allowed on this installation unless app data is cleared.
+        try:
+            if os.path.isfile(home.account_lock_file):
+                with open(home.account_lock_file, "r", encoding="utf-8") as f:
+                    locked = json.load(f).get("username", "")
+                if locked and clean_username.casefold() != locked.casefold():
+                    home.message("One account on this device", f"This SAM NG installation is locked to @{locked}. Log in with that account instead.")
+                    return False
+            else:
+                os.makedirs(home.data_dir, exist_ok=True)
+                with open(home.account_lock_file, "w", encoding="utf-8") as f:
+                    json.dump({"username": clean_username}, f)
+        except Exception as error:
+            home.message("Account setting", "Could not save the one-account setting: " + str(error))
+            return False
         home.username = clean_username
         home.is_logged_in = True
         app.username = clean_username
         app.is_logged_in = True
         home._save_data()
         self.manager.current = "home"
+        return True
 
     def handle_login(self, *_):
         u = self.user_input.text.strip()
@@ -292,8 +320,8 @@ class AuthScreen(Screen):
             self.user_input.hint_text = "Provide username & password!"
             return
         app = App.get_running_app()
-        self._finish_auth(u)
-        self.manager.get_screen("home").message("Account Created", f"Successfully registered as @{app.username}")
+        if self._finish_auth(u):
+            self.manager.get_screen("home").message("Account Created", f"Successfully registered as @{app.username}")
 
 
 class HomeScreen(Screen):
@@ -302,11 +330,14 @@ class HomeScreen(Screen):
         app = App.get_running_app()
         self.data_dir = app.user_data_dir
         self.state_file = os.path.join(self.data_dir, "samng_data.json")
+        self.account_lock_file = os.path.join(self.data_dir, "samng_account_lock.json")
+        self.ai_messages = []
+        self.inbox_notifications = []
+        self.friends = []
+        self._chat_keyboard_height = 0
         self._native_picker_callback = None
         self._native_picker_kind = "media"
         self._native_picker_request_code = 4817
-        self._native_camera_photo_request_code = 4818
-        self._native_camera_video_request_code = 4819
         if autoclass:
             try:
                 PythonActivity = autoclass("org.kivy.android.PythonActivity")
@@ -326,8 +357,6 @@ class HomeScreen(Screen):
         self.saved = set()
         self.liked = set()
         self.search_history = ["samng trends", "tutorial video", "kivy design"]
-        self.ai_chat_history = []
-        self.ai_waiting = False
         self.secret_codes = {"*#7266#": "SAM NG Engine v0.8", "*#0007#": "Debug Overlay Activated"}
         self.active_page = "Home"
         self.inbox_return_page = "Home"
@@ -349,9 +378,21 @@ class HomeScreen(Screen):
         self.last_username_change = 0
         self.is_logged_in = app.is_logged_in
         self._load_data()
+        # Preserve the existing profile as the one allowed account when upgrading
+        # an older installation that predates the account-lock file.
+        if os.path.isfile(self.state_file) and self.username and not os.path.isfile(self.account_lock_file):
+            try:
+                os.makedirs(self.data_dir, exist_ok=True)
+                with open(self.account_lock_file, "w", encoding="utf-8") as lock_file:
+                    json.dump({"username": self.username}, lock_file)
+            except Exception:
+                pass
         self.clean_expired_trash()
 
-        self.root = BoxLayout(orientation="vertical", spacing=0)
+        # Keep app controls clear of Android's status bar and system navigation area.
+        # 28dp top inset is about 1cm; 44dp bottom inset lifts the app nav above system controls.
+        self.root = BoxLayout(orientation="vertical", spacing=0,
+                              padding=(dp(0), dp(28), dp(0), dp(44)))
         self.add_widget(self.root)
 
         self.topbar = BoxLayout(size_hint_y=None, height=dp(65),
@@ -362,6 +403,9 @@ class HomeScreen(Screen):
         for tab in ("STEM", "Following", "For You"):
             b = TextTabButton(text=tab, is_active=(tab == "For You"), active_color=CYAN)
             b.bind(on_release=lambda btn, t=tab: self.change_tab(t))
+            b.color = rgba(WHITE)
+            b.bold = True
+            b.font_size = "16sp"
             self.topbar.add_widget(b)
             self.top_tab_buttons[tab] = b
 
@@ -384,7 +428,7 @@ class HomeScreen(Screen):
 
         mic_btn = CleanNavButton(text="🎤", size_hint_x=None, width=dp(40),
                                  font_size="18sp", color=rgba(WHITE))
-        mic_btn.bind(on_release=lambda *_: self.message("Voice Search", "Voice input active..."))
+        mic_btn.bind(on_release=self.start_voice_search)
         self.search_bar_top.add_widget(mic_btn)
 
         self.root.add_widget(self.search_bar_top)
@@ -392,7 +436,8 @@ class HomeScreen(Screen):
         self.content = BoxLayout(orientation="vertical", spacing=0)
         self.root.add_widget(self.content)
 
-        self.nav_wrapper = BoxLayout(size_hint_y=None, height=dp(65), padding=(dp(0), dp(0), dp(0), dp(8)))
+        self.nav_wrapper = BoxLayout(size_hint_y=None, height=dp(82),
+                                     padding=(dp(0), dp(2), dp(0), dp(2)))
         self.nav = BoxLayout(size_hint=(1, 1), padding=(dp(4), dp(2)), spacing=dp(0))
         self.nav_wrapper.add_widget(self.nav)
         self.root.add_widget(self.nav_wrapper)
@@ -411,7 +456,7 @@ class HomeScreen(Screen):
                 b = CleanNavButton(size_hint_x=1)
                 self.update_nav_avatar(b)
             else:
-                b = CleanNavButton(text=label, font_size="15sp" if name != "Create" else "26sp",
+                b = CleanNavButton(text=label, font_size="18sp" if name != "Create" else "28sp",
                                    color=rgba(WHITE), bold=True, size_hint_x=1)
             b.bind(on_release=lambda btn, n=name: self.navigate(n))
             self.nav.add_widget(b)
@@ -433,15 +478,8 @@ class HomeScreen(Screen):
         button.bind(size=lambda w, v: setattr(avatar_ring, "pos",
                                               (w.x + (w.width - dp(36)) / 2,
                                                w.y + (w.height - dp(36)) / 2)))
-        if self.profile_picture and os.path.isfile(self.profile_picture):
-            avatar_img = Image(source=self.profile_picture, allow_stretch=True, keep_ratio=False,
-                               size_hint=(None, None), size=(dp(30), dp(30)))
-            avatar_box.add_widget(avatar_img)
-        else:
-            lbl = Label(text=self.profile_name[:1].upper() or "S", color=rgba(CYAN), bold=True,
-                        font_size="16sp", size_hint=(None, None), size=(dp(30), dp(30)))
-            avatar_box.add_widget(lbl)
-
+        circle = self._round_avatar(self.profile_picture, self.profile_name[:1].upper() or "", 30, CYAN)
+        avatar_box.add_widget(circle)
         button.add_widget(avatar_box)
 
     def _load_data(self):
@@ -459,7 +497,6 @@ class HomeScreen(Screen):
                 self.saved = set(data.get("saved", []))
                 self.liked = set(data.get("liked", []))
                 self.search_history = data.get("search_history", self.search_history)
-                self.ai_chat_history = data.get("ai_chat_history", [])
                 self.profile_name = data.get("profile_name", self.profile_name)
                 self.username = data.get("username", self.username)
                 self.bio = data.get("bio", self.bio)
@@ -475,6 +512,9 @@ class HomeScreen(Screen):
                 self.last_name_change = data.get("last_name_change", 0)
                 self.last_username_change = data.get("last_username_change", 0)
                 self.is_logged_in = bool(data.get("is_logged_in", False))
+                self.ai_messages = data.get("ai_messages", [])
+                self.inbox_notifications = data.get("inbox_notifications", [])
+                self.friends = data.get("friends", [])
         except Exception:
             pass
 
@@ -486,7 +526,6 @@ class HomeScreen(Screen):
                 "deleted_posts": self.deleted_posts, "comments": self.comments,
                 "post_captions": self.post_captions, "post_documents": self.post_documents,
                 "saved": list(self.saved), "liked": list(self.liked), "search_history": self.search_history,
-                "ai_chat_history": self.ai_chat_history,
                 "profile_name": self.profile_name, "username": self.username,
                 "bio": self.bio, "profile_picture": self.profile_picture,
                 "banner_picture": self.banner_picture, "banner_opacity": self.banner_opacity,
@@ -494,7 +533,8 @@ class HomeScreen(Screen):
                 "dark_mode": self.dark_mode, "autoplay": self.autoplay,
                 "show_post_colours": self.show_post_colours, "display_mode": self.display_mode,
                 "last_name_change": self.last_name_change, "last_username_change": self.last_username_change,
-                "is_logged_in": self.is_logged_in,
+                "is_logged_in": self.is_logged_in, "ai_messages": self.ai_messages,
+                "inbox_notifications": self.inbox_notifications, "friends": self.friends,
             }
             temp_file = self.state_file + ".tmp"
             with open(temp_file, "w", encoding="utf-8") as f:
@@ -560,10 +600,55 @@ class HomeScreen(Screen):
         self.topbar.height = dp(65)
         self.topbar.opacity = 1
         self.topbar.disabled = False
-        self.nav_wrapper.height = dp(65)
+        self.nav_wrapper.height = dp(82)
         self.nav_wrapper.opacity = 1
         self.nav_wrapper.disabled = False
         self.show_feed()
+
+    def start_voice_search(self, *_):
+        """Request microphone permission before launching Android speech recognition."""
+        if self._android_activity is None or autoclass is None:
+            self.message("Voice Search", "Voice search requires Android speech recognition.")
+            return
+        if permissions:
+            try:
+                permissions.request_permission(
+                    permissions.PERMISSION.RECORD_AUDIO,
+                    self._on_microphone_permission_result
+                )
+                return
+            except TypeError:
+                # Older Plyer versions may not expose a permission callback.
+                try:
+                    permissions.request_permission(permissions.PERMISSION.RECORD_AUDIO)
+                except Exception:
+                    pass
+        self._launch_voice_recognition()
+
+    def _on_microphone_permission_result(self, *args):
+        """Plyer callback; start recognition only after the permission response."""
+        try:
+            status = args[-1] if args else True
+            if status is False or (isinstance(status, (list, tuple)) and status and not all(status)):
+                self.message("Microphone permission",
+                             "Allow microphone access in Android Settings to use voice search.")
+                return
+        except Exception:
+            pass
+        Clock.schedule_once(lambda _dt: self._launch_voice_recognition(), 0)
+
+    def _launch_voice_recognition(self):
+        try:
+            Intent = autoclass("android.content.Intent")
+            RecognizerIntent = autoclass("android.speech.RecognizerIntent")
+            intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak your search")
+            self._android_activity.startActivityForResult(intent, self._native_picker_request_code + 1)
+        except Exception:
+            self.message("Voice Search unavailable",
+                         "Allow microphone permission in Android Settings and make sure a speech-recognition service is available.")
 
     def on_search_text_change(self, instance, value):
         if value in self.secret_codes:
@@ -629,10 +714,7 @@ class HomeScreen(Screen):
             avatar.add_widget(Image(source=self.profile_picture, allow_stretch=True, keep_ratio=False,
                                     size_hint=(None, None), size=(dp(34), dp(34)),
                                     pos_hint={"center_x": .5, "center_y": .5}))
-        else:
-            lbl = Label(text=self.profile_name[:1].upper() or "S", color=rgba(CYAN), bold=True,
-                        font_size="16sp", pos_hint={"center_x": .5, "center_y": .5})
-            avatar.add_widget(lbl)
+        # Keep the avatar area clean when no profile photo is set; don't show a stray initial.
         header_box.add_widget(avatar)
         header_label = self.profile_name if self.display_mode == "name" else f"@{self.username}"
         title_box = BoxLayout(orientation="vertical", spacing=0)
@@ -762,7 +844,7 @@ class HomeScreen(Screen):
             self.nav_wrapper.disabled = True
         else:
             # Keep the bottom avatar visible on the profile page.
-            self.nav_wrapper.height = dp(65)
+            self.nav_wrapper.height = dp(82)
             self.nav_wrapper.opacity = 1
             self.nav_wrapper.disabled = False
         for key, button in self.nav_buttons.items():
@@ -776,174 +858,192 @@ class HomeScreen(Screen):
         elif name == "Profile":
             self.show_profile()
         elif name == "Friends":
-            self.show_ai_friend()
+            self.show_friends()
         elif name == "Inbox":
-            self.simple_page("INBOX", "Messages and comments appear here.", PINK,
-                             back_to=self.inbox_return_page)
+            self.show_inbox()
 
-    def show_ai_friend(self, *_):
-        """Permanent Nexovara AI friend and chat screen inside SAM NG."""
+    def show_friends(self):
+        """Show the built-in QYRONEX AI profile plus any future friend entries."""
         self.active_page = "Friends"
         self.clear_content()
-        self.page_title("AI", PURPLE, back_to="Home")
+        self.page_title("FRIENDS", PURPLE, back_to="Home")
+        scroll = ScrollView(do_scroll_x=False, effect_cls="ScrollEffect")
+        body = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(8), padding=dp(10))
+        body.bind(minimum_height=body.setter("height"))
+        body.add_widget(self._ai_profile_row())
+        body.add_widget(Label(text="FRIENDS · People you follow who follow you back", color=rgba(GREY),
+                              font_size="12sp", size_hint_y=None, height=dp(34), halign="left", valign="middle"))
+        friends = getattr(self, "friends", [])
+        if not friends:
+            body.add_widget(Label(text="No mutual friends yet.", color=rgba(GREY),
+                                  size_hint_y=None, height=dp(54), halign="center", valign="middle"))
+        for friend in friends:
+            name = friend.get("name", "Friend") if isinstance(friend, dict) else str(friend)
+            preview = friend.get("last_message", "Tap to chat") if isinstance(friend, dict) else "Tap to chat"
+            row = BoxLayout(size_hint_y=None, height=dp(76), spacing=dp(12), padding=(dp(8), dp(6)))
+            avatar = self._round_avatar(friend.get("photo", "") if isinstance(friend, dict) else "", name[:1].upper())
+            details = BoxLayout(orientation="vertical", spacing=dp(2))
+            details.add_widget(Label(text=name, color=rgba(WHITE), bold=True, halign="left", valign="middle"))
+            details.add_widget(Label(text=preview, color=rgba(GREY), font_size="12sp", halign="left", valign="middle"))
+            chat_button = NeonButton(text="Chat", size_hint=(None, None), size=(dp(72), dp(38)), outline=CYAN, color=rgba(WHITE))
+            chat_button.bind(on_release=lambda *_args, n=name: self.message("Chat", "Messaging for " + n + " is not connected yet."))
+            row.add_widget(avatar); row.add_widget(details); row.add_widget(chat_button)
+            body.add_widget(row)
+        scroll.add_widget(body)
+        self.content.add_widget(scroll)
 
-        outer = BoxLayout(orientation="vertical", spacing=dp(8), padding=(dp(10), dp(4), dp(10), dp(10)))
-        self.content.add_widget(outer)
-
-        intro = Label(
-            text="AI  •  Your SAM NG assistant",
-            color=rgba(GREY), font_size="12sp", size_hint_y=None, height=dp(34),
-            halign="center", valign="middle")
-        intro.bind(size=lambda w, v: setattr(w, "text_size", v))
-        outer.add_widget(intro)
-
-        scroll = ScrollView(do_scroll_x=False, bar_width=dp(2), size_hint=(1, 1))
-        self.ai_chat_stack = BoxLayout(orientation="vertical", size_hint_y=None,
-                                       spacing=dp(8), padding=(dp(2), dp(6)))
-        self.ai_chat_stack.bind(minimum_height=self.ai_chat_stack.setter("height"))
-        scroll.add_widget(self.ai_chat_stack)
-        outer.add_widget(scroll)
-        self.ai_chat_scroll = scroll
-
-        if not self.ai_chat_history:
-            self._add_ai_bubble("AI", "Hi! I'm AI, your friend in SAM NG. Ask me about the app or general questions.")
-        else:
-            for item in self.ai_chat_history[-80:]:
-                self._add_ai_bubble(item.get("role", "Nexovara AI"), item.get("text", ""), save=False)
-
-        composer = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(52), spacing=dp(7))
-        self.ai_input = TextInput(
-            hint_text="Message AI...", multiline=False, size_hint_x=1,
-            background_normal="", background_active="", background_color=rgba(PANEL),
-            foreground_color=rgba(WHITE), cursor_color=rgba(CYAN), padding=(dp(12), dp(14)))
-        self.ai_input.bind(on_text_validate=self.send_ai_message)
-        send = NeonButton(text="Send", size_hint_x=None, width=dp(76), outline=CYAN,
-                          color=rgba(CYAN), radius=14)
-        send.bind(on_release=self.send_ai_message)
-        composer.add_widget(self.ai_input)
-        composer.add_widget(send)
-        outer.add_widget(composer)
-
-        privacy = Label(
-            text="Privacy: messages sent to the AI provider may be processed to generate replies. Do not send passwords or highly sensitive information.",
-            color=rgba(GREY), font_size="10sp", size_hint_y=None, height=dp(32),
-            halign="center", valign="middle")
-        privacy.bind(size=lambda w, v: setattr(w, "text_size", v))
-        outer.add_widget(privacy)
-        Clock.schedule_once(lambda *_: setattr(scroll, "scroll_y", 0), .15)
-
-    def _add_ai_bubble(self, role, text, save=True):
-        is_user = str(role).lower() in ("user", "you")
-        row = BoxLayout(orientation="horizontal", size_hint_y=None, spacing=dp(7),
-                        size_hint_x=1, height=dp(54))
-        row.bind(minimum_height=row.setter("height"))
-        avatar = Label(text="S" if is_user else "AI", color=rgba(WHITE), bold=True,
-                       font_size="12sp", size_hint=(None, None), size=(dp(36), dp(36)))
-        with avatar.canvas.before:
-            Color(*rgba(CYAN if is_user else PURPLE))
-            avatar_bg = Ellipse(pos=avatar.pos, size=avatar.size)
-        avatar.bind(pos=lambda w, v: setattr(avatar_bg, "pos", v))
-        avatar.bind(size=lambda w, v: setattr(avatar_bg, "size", v))
-        bubble = BoxLayout(orientation="vertical", size_hint_y=None, padding=dp(10), spacing=dp(3))
-        bubble.bind(minimum_height=bubble.setter("height"))
-        title = Label(text="You" if is_user else "AI", color=rgba(CYAN if is_user else PURPLE),
-                      bold=True, font_size="12sp", size_hint_y=None, height=dp(20), halign="left", valign="middle")
-        title.bind(size=lambda w, v: setattr(w, "text_size", v))
-        body = Label(text=str(text), color=rgba(WHITE), font_size="14sp", size_hint_y=None,
-                     halign="left", valign="top")
-        body.bind(width=lambda w, v: setattr(w, "text_size", (max(dp(80), v-dp(12)), None)))
-        body.bind(texture_size=lambda w, v: setattr(w, "height", v[1] + dp(8)))
-        with bubble.canvas.before:
-            Color(*rgba("#20202D" if is_user else "#171725"))
-            bg = RoundedRectangle(pos=bubble.pos, size=bubble.size, radius=[dp(12)])
-        bubble.bind(pos=lambda w, v: setattr(bg, "pos", v))
-        bubble.bind(size=lambda w, v: setattr(bg, "size", v))
-        bubble.add_widget(title)
-        bubble.add_widget(body)
-        row.add_widget(avatar)
-        row.add_widget(bubble)
-        # Keep the AI/user profile badge and message grouped as one chat row.
-        row.height = max(dp(48), bubble.height)
-        self.ai_chat_stack.add_widget(row)
-        if save:
-            self.ai_chat_history.append({"role": "user" if is_user else "AI", "text": str(text)})
-            self.ai_chat_history = self.ai_chat_history[-160:]
-            self._save_data()
-        if hasattr(self, "ai_chat_scroll"):
-            Clock.schedule_once(lambda *_: setattr(self.ai_chat_scroll, "scroll_y", 0), .1)
-
-    def send_ai_message(self, *_):
-        if self.ai_waiting:
-            return
-        if not hasattr(self, "ai_input"):
-            return
-        prompt = self.ai_input.text.strip()
-        if not prompt:
-            return
-        self.ai_input.text = ""
-        self._add_ai_bubble("You", prompt)
-        if not NEXOVARA_API_KEY or NEXOVARA_API_KEY == "PASTE_YOUR_GEMINI_API_KEY_HERE":
-            self._add_ai_bubble("AI", "Add your Gemini API key in main.py at NEXOVARA_API_KEY near the top, then restart SAM NG.")
-            return
-        self.ai_waiting = True
-        self._add_ai_bubble("AI", "AI is typing…")
-        # Use a background thread so the Kivy interface does not freeze while waiting for the API.
-        history = list(self.ai_chat_history[-16:])
-        threading.Thread(target=self._request_nexovara_reply, args=(prompt, history), daemon=True).start()
-
-    def _request_nexovara_reply(self, prompt, history):
+    def _round_avatar(self, path="", letter="Q", size=54, accent=CYAN):
+        """Circular avatar with a texture clipped into an ellipse."""
+        avatar = Widget(size_hint=(None, None), size=(dp(size), dp(size)))
         try:
-            contents = []
-            for item in history:
-                role = "user" if str(item.get("role", "")).lower() == "user" else "model"
-                text = str(item.get("text", ""))
-                if text and text != "Thinking…":
-                    contents.append({"role": role, "parts": [{"text": text}]})
-            # Ensure the latest prompt is present exactly once.
-            if not contents or contents[-1]["role"] != "user" or contents[-1]["parts"][0]["text"] != prompt:
-                contents.append({"role": "user", "parts": [{"text": prompt}]})
-            system_text = (
-                "You are Nexovara AI, a helpful AI friend inside the SAM NG app. "
-                "Answer general questions clearly. For SAM NG questions, explain only known features: "
-                "Home feed, Friends, Inbox, Create, Profile, Search, Help Center, and Privacy Policy. "
-                "Do not claim access to private user data or app systems you have not been connected to. "
-                "Do not diagnose medical conditions; provide general health information and recommend a qualified professional when appropriate. "
-                "Be honest when you do not know something."
-            )
-            payload = {
-                "system_instruction": {"parts": [{"text": system_text}]},
-                "contents": contents,
-                "generationConfig": {"temperature": 0.7, "maxOutputTokens": 1024}
-            }
-            url = NEXOVARA_API_URL.format(model=NEXOVARA_MODEL) + "?key=" + NEXOVARA_API_KEY.strip()
-            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"),
-                                         headers={"Content-Type": "application/json"}, method="POST")
-            with urllib.request.urlopen(req, timeout=45) as response:
-                result = json.loads(response.read().decode("utf-8"))
-            parts = result.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-            answer = "\n".join(part.get("text", "") for part in parts if part.get("text"))
-            if not answer:
-                answer = "I received an empty response. Please try asking again."
-        except urllib.error.HTTPError as exc:
-            try:
-                detail = exc.read().decode("utf-8", errors="replace")[:700]
-            except Exception:
-                detail = str(exc)
-            answer = f"AI API error ({exc.code}). Check the API key, model access, and internet connection.\n{detail}"
-        except Exception as exc:
-            answer = f"Couldn't reach Nexovara AI. Check your internet connection and API key.\nDetails: {exc}"
-        Clock.schedule_once(lambda *_: self._finish_nexovara_reply(answer), 0)
+            if path and os.path.isfile(path):
+                texture = CoreImage(path).texture
+                with avatar.canvas:
+                    Color(1, 1, 1, 1)
+                    shape = Ellipse(pos=avatar.pos, size=avatar.size, texture=texture)
+            else:
+                with avatar.canvas:
+                    Color(*rgba(PANEL))
+                    shape = Ellipse(pos=avatar.pos, size=avatar.size)
+                avatar.add_widget(Label(text=letter or "Q", color=rgba(accent), bold=True,
+                                        font_size=f"{int(size * .42)}sp",
+                                        pos_hint={"center_x": .5, "center_y": .5}))
+            avatar.bind(pos=lambda w, v: setattr(shape, "pos", v),
+                        size=lambda w, v: setattr(shape, "size", v))
+        except Exception:
+            pass
+        return avatar
 
-    def _finish_nexovara_reply(self, answer):
-        # Remove the temporary thinking bubble, then show and save the final answer.
-        if hasattr(self, "ai_chat_stack"):
-            for child in list(self.ai_chat_stack.children):
-                labels = [w.text for w in child.children if isinstance(w, Label)]
-                if any("Thinking…" in t or "AI is typing…" in t for t in labels):
-                    self.ai_chat_stack.remove_widget(child)
-                    break
-        self.ai_waiting = False
-        self._add_ai_bubble("AI", answer)
+    def _ai_profile_row(self):
+        row = BoxLayout(size_hint_y=None, height=dp(82), spacing=dp(12), padding=(dp(8), dp(8)))
+        avatar = self._round_avatar("", "Q", 58, PURPLE)
+        details = BoxLayout(orientation="vertical", spacing=dp(2))
+        details.add_widget(Label(text="QYRONEX AI", color=rgba(WHITE), bold=True, font_size="16sp", halign="left", valign="middle"))
+        details.add_widget(Label(text="AI assistant · Tap to start chatting", color=rgba(CYAN), font_size="12sp", halign="left", valign="middle"))
+        open_btn = NeonButton(text="Chat", size_hint=(None, None), size=(dp(72), dp(40)), outline=PURPLE, color=rgba(WHITE))
+        open_btn.bind(on_release=lambda *_: self.open_ai_chat())
+        row.add_widget(avatar); row.add_widget(details); row.add_widget(open_btn)
+        return row
+
+    def show_inbox(self):
+        """Inbox for activity and messages, separate from mutual friends."""
+        self.active_page = "Inbox"
+        self.clear_content()
+        self.page_title("INBOX", PINK, back_to=self.inbox_return_page)
+        scroll = ScrollView(do_scroll_x=False, effect_cls="ScrollEffect", bar_width=dp(2))
+        body = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(8), padding=dp(10))
+        body.bind(minimum_height=body.setter("height"))
+        body.add_widget(Label(
+            text="ACTIVITY & MESSAGES · Likes, shares, messages and new followers",
+            color=rgba(GREY), font_size="12sp", size_hint_y=None, height=dp(42),
+            halign="left", valign="middle"))
+        body.add_widget(self._ai_profile_row())
+        notifications = list(getattr(self, "inbox_notifications", []))
+        for item in reversed(notifications):
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title", "New activity"))
+            detail = str(item.get("detail", ""))
+            kind = str(item.get("type", "activity")).lower()
+            icon_text = {"like": "♥", "share": "↗", "message": "●", "follower": "+", "friend": "✓"}.get(kind, "•")
+            row = BoxLayout(size_hint_y=None, height=dp(66), spacing=dp(10), padding=(dp(8), dp(5)))
+            avatar = self._round_avatar("", icon_text, 44, PINK if kind in ("like", "follower") else CYAN)
+            details = BoxLayout(orientation="vertical", spacing=dp(2))
+            details.add_widget(Label(text=title, color=rgba(WHITE), bold=True, halign="left", valign="middle"))
+            details.add_widget(Label(text=detail, color=rgba(GREY), font_size="12sp", halign="left", valign="middle"))
+            row.add_widget(avatar)
+            row.add_widget(details)
+            body.add_widget(row)
+        if not notifications:
+            body.add_widget(Label(
+                text="No activity yet. New likes, shares, messages and follower alerts will appear here.",
+                color=rgba(GREY), size_hint_y=None, height=dp(76), halign="center", valign="middle"))
+        scroll.add_widget(body)
+        self.content.add_widget(scroll)
+
+    def open_ai_chat(self, *_):
+        """Open a keyboard-aware local chat UI for QYRONEX AI."""
+        self.active_page = "AI Chat"
+        self.clear_content()
+        try:
+            Window.softinput_mode = "below_target"
+        except Exception:
+            pass
+        chat_root = BoxLayout(orientation="vertical", spacing=dp(6), padding=(dp(8), dp(4), dp(8), dp(6)))
+        header = BoxLayout(size_hint_y=None, height=dp(54), spacing=dp(8))
+        back = CleanNavButton(text="‹ Back", size_hint_x=None, width=dp(68), color=rgba(CYAN), bold=True)
+        back.bind(on_release=lambda *_: self.navigate("Inbox"))
+        header.add_widget(back)
+        header.add_widget(self._round_avatar("", "Q", 40, PURPLE))
+        names = BoxLayout(orientation="vertical", spacing=0)
+        names.add_widget(Label(text="QYRONEX AI", color=rgba(WHITE), bold=True, halign="left", valign="middle"))
+        names.add_widget(Label(text="AI assistant", color=rgba(CYAN), font_size="11sp", halign="left", valign="middle"))
+        header.add_widget(names)
+        chat_root.add_widget(header)
+        history_scroll = ScrollView(do_scroll_x=False, effect_cls="ScrollEffect", bar_width=dp(2))
+        history = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(8), padding=(dp(4), dp(8)))
+        history.bind(minimum_height=history.setter("height"))
+        def add_bubble(sender, message):
+            bubble = BoxLayout(orientation="vertical", size_hint=(.92, None), padding=dp(10), spacing=dp(2))
+            bubble.bind(minimum_height=bubble.setter("height"))
+            with bubble.canvas.before:
+                Color(*rgba(PANEL if sender == "QYRONEX AI" else "#173B43"))
+                bg = RoundedRectangle(pos=bubble.pos, size=bubble.size, radius=[dp(15)] * 4)
+            bubble.bind(pos=lambda w, v: setattr(bg, "pos", v), size=lambda w, v: setattr(bg, "size", v))
+            bubble.add_widget(Label(text=f"[b]{sender}[/b]", markup=True, color=rgba(CYAN if sender == "QYRONEX AI" else WHITE), size_hint_y=None, height=dp(20), halign="left", valign="middle"))
+            text_label = Label(text=message, color=rgba(WHITE), halign="left", valign="top", size_hint_y=None)
+            text_label.bind(width=lambda w, v: setattr(w, "text_size", (max(1, v), None)), texture_size=lambda w, v: setattr(w, "height", v[1] + dp(4)))
+            bubble.add_widget(text_label)
+            align = AnchorLayout(anchor_x="left" if sender == "QYRONEX AI" else "right", size_hint_y=None)
+            align.add_widget(bubble)
+            align.bind(height=lambda w, v: None)
+            bubble.bind(height=lambda w, v: setattr(align, "height", v))
+            history.add_widget(align)
+        if not self.ai_messages:
+            self.ai_messages.append({"sender": "QYRONEX AI", "text": "Hi! I'm QYRONEX AI. What would you like help with?"})
+            self._save_data()
+        for item in self.ai_messages[-100:]:
+            add_bubble(item.get("sender", "QYRONEX AI"), item.get("text", ""))
+        history_scroll.add_widget(history)
+        chat_root.add_widget(history_scroll)
+        composer = BoxLayout(size_hint_y=None, height=dp(54), spacing=dp(6), padding=(0, dp(2)))
+        entry = RoundedInput(hint_text="Message QYRONEX AI…", multiline=False, size_hint_x=1)
+        send = NeonButton(text="➤", size_hint_x=None, width=dp(54), outline=CYAN, color=rgba(CYAN), radius=16)
+        composer.add_widget(entry); composer.add_widget(send)
+        chat_root.add_widget(composer)
+        self.content.add_widget(chat_root)
+        def send_message(*_):
+            value = entry.text.strip()
+            if not value:
+                return
+            user_message = value[:2000]
+            reply = self._local_ai_reply(user_message)
+            self.ai_messages.append({"sender": self.username or "You", "text": user_message})
+            self.ai_messages.append({"sender": "QYRONEX AI", "text": reply})
+            self.ai_messages = self.ai_messages[-200:]
+            self._save_data()
+            add_bubble(self.username or "You", user_message)
+            add_bubble("QYRONEX AI", reply)
+            entry.text = ""
+            Clock.schedule_once(lambda dt: setattr(history_scroll, "scroll_y", 0), .08)
+        send.bind(on_release=send_message)
+        entry.bind(on_text_validate=send_message)
+        # Retain the composer target and use Android's below_target mode so the
+        # whole bar follows the keyboard instead of staying behind it.
+        self._ai_chat_entry = entry
+        self._ai_chat_composer = composer
+        Clock.schedule_once(lambda dt: setattr(history_scroll, "scroll_y", 0), .1)
+
+    def _local_ai_reply(self, message):
+        """Offline fallback replies; a real hosted AI model/API is not connected here."""
+        text = message.lower()
+        if any(word in text for word in ("hello", "hi", "hey", "habari", "sasa")):
+            return "Hello! 👋 I'm QYRONEX AI. Tell me what you'd like to work on."
+        if any(word in text for word in ("code", "python", "kivy", "error", "app", "program")):
+            return "I can help you plan and troubleshoot code. Tell me the exact error and show the relevant code so we can work through it carefully. (Offline demo reply — online AI is not connected yet.)"
+        if any(word in text for word in ("school", "math", "physics", "kcse", "homework")):
+            return "Let's work through it step by step. Send the question and I'll help explain the method. (Offline demo reply — online AI is not connected yet.)"
+        return "I received your message. This chat screen is working, but the online AI model still needs a secure server/API connection before it can generate full AI answers."
 
     def simple_page(self, title, message, accent, back_to="Home"):
         self.clear_content()
@@ -955,7 +1055,9 @@ class HomeScreen(Screen):
         self.active_tab = tab
         for t_name, btn in self.top_tab_buttons.items():
             btn.is_active = (t_name == tab)
-            btn.color = rgba(CYAN if t_name == tab else GREY)
+            btn.color = rgba(WHITE)
+            btn.bold = True
+            btn.font_size = "16sp"
         if tab == "For You":
             self.show_feed()
         elif tab == "Following":
@@ -964,158 +1066,107 @@ class HomeScreen(Screen):
             self.simple_page("STEM", "Science • Technology • Engineering • Mathematics", CYAN)
 
     def pick_media(self, *_):
-        """Show Create actions with a visible Back button; use Android system apps."""
-        popup = Popup(title="Create a post", size_hint=(.94, None), height=dp(330), auto_dismiss=False)
-        layout = BoxLayout(orientation="vertical", spacing=dp(9), padding=dp(12))
-        hint = Label(text="Choose what you want to add", color=rgba(GREY),
-                     size_hint_y=None, height=dp(28), halign="left")
-        hint.bind(size=lambda w, v: setattr(w, "text_size", v))
-        layout.add_widget(hint)
-        actions = (("Take Photo", lambda: self.open_native_camera("photo")),
-                   ("Record Video", lambda: self.open_native_camera("video")),
-                   ("Photo / Video Upload", lambda: self.open_picker("media")),
-                   ("Document", lambda: self.open_picker("document")),
-                   ("← Back to Feed", lambda: self.navigate("Home")))
-        for label, action in actions:
-            button = NeonButton(text=label, size_hint_y=None, height=dp(44),
-                                outline=PURPLE if label.startswith("←") else CYAN,
+        """Show a bottom sheet with upload choices only (no camera option)."""
+        sheet = ModalView(size_hint=(1, None), height=dp(244),
+                          pos_hint={"x": 0, "y": 0},
+                          background="", background_color=(0, 0, 0, 0),
+                          overlay_color=(0, 0, 0, .58), auto_dismiss=True)
+        panel = BoxLayout(orientation="vertical", spacing=dp(8), padding=(dp(14), dp(14), dp(14), dp(12)))
+        panel.canvas.before.clear()
+        with panel.canvas.before:
+            Color(*rgba(PANEL))
+            panel._sheet_bg = RoundedRectangle(pos=panel.pos, size=panel.size, radius=[dp(22), dp(22), 0, 0])
+        panel.bind(pos=lambda widget, value: setattr(widget._sheet_bg, "pos", value),
+                   size=lambda widget, value: setattr(widget._sheet_bg, "size", value))
+        heading = Label(text="Add to SAM NG", color=rgba(WHITE), bold=True,
+                        font_size="17sp", size_hint_y=None, height=dp(28), halign="left")
+        heading.bind(size=lambda widget, value: setattr(widget, "text_size", value))
+        panel.add_widget(heading)
+        for label, kind in (("Add Photos", "photo"), ("Add Video", "video"), ("Add Document", "document")):
+            button = NeonButton(text=label, size_hint_y=None, height=dp(46),
+                                outline=CYAN if kind == "photo" else (PURPLE if kind == "video" else PINK),
                                 color=rgba(WHITE), radius=14)
-            button.bind(on_release=lambda _btn, fn=action: (popup.dismiss(), fn()))
-            layout.add_widget(button)
-        popup.content = layout
-        popup.open()
-
-    def open_native_camera(self, mode="photo"):
-        """Launch the phone's installed camera app instead of Plyer's unavailable camera API."""
-        if not (self._android_activity is not None and autoclass):
-            # Pydroid may not expose PythonActivity. Try Plyer's camera plugin as a
-            # fallback; a packaged Android build can use the native Intent path below.
-            try:
-                if mode == "photo" and camera is not None:
-                    target = os.path.join(self.data_dir, "camera_" + str(int(time.time() * 1000)) + ".jpg")
-                    camera.take_picture(filename=target, on_complete=self.camera_completed)
-                    return
-            except Exception:
-                pass
-            self.message("Camera unavailable", "This Pydroid session cannot launch the Android camera. The camera Intent works in the packaged Android app; use Photo / Video Upload to test posting here.")
-            return
-        try:
-            Intent = autoclass("android.content.Intent")
-            if mode == "video":
-                intent = Intent("android.media.action.VIDEO_CAPTURE")
-                request_code = self._native_camera_video_request_code
-            else:
-                intent = Intent("android.media.action.IMAGE_CAPTURE")
-                request_code = self._native_camera_photo_request_code
-            if not intent.resolveActivity(self._android_activity.getPackageManager()):
-                self.message("Camera unavailable", "No compatible camera app was found on this device.")
-                return
-            self._android_activity.startActivityForResult(intent, request_code)
-        except Exception as error:
-            self.message("Could not open camera", "Allow camera access in Android Settings, then try again.\n" + str(error))
+            button.bind(on_release=lambda _btn, selected_kind=kind: (sheet.dismiss(), self.open_picker(selected_kind)))
+            panel.add_widget(button)
+        sheet.add_widget(panel)
+        sheet.open()
 
     def open_camera(self):
-        # Backwards-compatible name used by any older button binding.
-        self.open_native_camera("photo")
+        if permissions:
+            try:
+                permissions.request_permission(permissions.PERMISSION.CAMERA)
+            except Exception:
+                pass
+        try:
+            target = os.path.join(self.data_dir, "camera_" + str(int(time.time())) + ".jpg")
+            if camera:
+                camera.take_picture(filename=target, on_complete=self.camera_completed)
+            else:
+                self.message("Camera API", "Plyer camera not detected.")
+        except Exception:
+            self.message("Camera permission needed", "Allow camera permissions in settings.")
 
     def camera_completed(self, path):
         if path and os.path.isfile(path):
             self.file_selected([path])
 
-    def open_picker(self, kind="media"):
-        """Use Android's native content chooser, which can show recent media via Files/Photos."""
+    def open_picker(self, kind="media", callback=None):
+        """Launch Android's system content picker for photos, videos, or documents."""
         if self._android_activity is not None and autoclass:
             try:
                 Intent = autoclass("android.content.Intent")
                 intent = Intent(Intent.ACTION_GET_CONTENT)
                 intent.addCategory(Intent.CATEGORY_OPENABLE)
-                if kind == "document":
-                    intent.setType("application/*")
-                else:
-                    # Keep the base MIME type as images so Android offers the visual
-                    # Photos picker (like the user's third screenshot), while allowing
-                    # video providers through EXTRA_MIME_TYPES as well.
+                if kind in ("photo", "profile_image"):
                     intent.setType("image/*")
-                    mime_types = jarray.array(["image/*", "video/*"], "java.lang.String")
-                    intent.putExtra(Intent.EXTRA_MIME_TYPES, mime_types)
-                self._native_picker_callback = self.file_selected
+                elif kind == "video":
+                    intent.setType("video/*")
+                else:
+                    intent.setType("*/*")
+                self._native_picker_callback = callback or self.file_selected
                 self._native_picker_kind = kind
-                title = "Choose a document" if kind == "document" else "Choose a photo or video"
-                chooser = Intent.createChooser(intent, title)
-                self._android_activity.startActivityForResult(chooser, self._native_picker_request_code)
+                # Android's system chooser lets the device provide its available
+                # photo/video providers (including Files by Google or Gallery).
+                chooser_title = {"photo": "Add photos", "profile_image": "Choose a photo",
+                                 "video": "Add video", "document": "Add document"}.get(kind, "Choose media")
+                chooser_intent = Intent.createChooser(intent, chooser_title)
+                self._android_activity.startActivityForResult(chooser_intent, self._native_picker_request_code)
                 return
             except Exception as error:
                 self._native_picker_callback = None
-                self.message("Picker unavailable", "Android could not open the media chooser. Try again or use the file chooser.\n" + str(error))
+                self.message("Could not open photos", "Android could not open its photo/video selection window.\n" + str(error))
+                return
 
-        # Non-Android fallback only. Android should use the native content picker above.
+        # Desktop fallback only; Android must use the native content picker.
         if filechooser:
             try:
-                filters = [["Documents", "*.pdf", "*.txt", "*.doc", "*.docx"]] if kind == "document" else [["Photos and videos", "*.png", "*.jpg", "*.jpeg", "*.webp", "*.mp4", "*.mov", "*.mkv", "*.3gp"]]
-                filechooser.open_file(on_selection=lambda selection: self.file_selected(selection, kind), filters=filters)
+                if kind == "video":
+                    filters = [["Videos", "*.mp4", "*.mov", "*.mkv", "*.3gp", "*.webm"]]
+                elif kind in ("photo", "profile_image"):
+                    filters = [["Photos", "*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp", "*.gif"]]
+                else:
+                    filters = [["Documents", "*.pdf", "*.doc", "*.docx", "*.txt"]]
+                filechooser.open_file(on_selection=lambda selection: (callback(selection) if callback else self.file_selected(selection, "document" if kind == "document" else "media")), filters=filters)
                 return
             except Exception:
                 pass
-        popup = Popup(title="Select a file", size_hint=(.96, .88), auto_dismiss=True)
-        layout = BoxLayout(orientation="vertical", spacing=dp(6), padding=dp(6))
-        chooser = FileChooserListView(path=os.path.expanduser("~"), filters=["*.pdf", "*.txt", "*.doc", "*.docx"] if kind == "document" else ["*.mp4", "*.mkv", "*.jpg", "*.jpeg", "*.png", "*.webp"], multiselect=False)
-        layout.add_widget(chooser)
-        row = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(6))
-        cancel = NeonButton(text="Back", outline="#343440", color=rgba(WHITE))
-        choose = NeonButton(text="Select file", outline=CYAN, color=rgba(CYAN))
-        cancel.bind(on_release=popup.dismiss)
-        choose.bind(on_release=lambda *_: (popup.dismiss(), self.file_selected(chooser.selection, kind)))
-        row.add_widget(cancel)
-        row.add_widget(choose)
-        layout.add_widget(row)
-        popup.content = layout
-        popup.open()
+        self.message("Picker unavailable", "Could not open the device's content picker.")
 
     def _on_native_picker_result(self, request_code, result_code, intent):
-        # Android camera activities return here as well as the media picker.
-        if request_code in (self._native_camera_photo_request_code, self._native_camera_video_request_code):
-            if result_code != -1 or intent is None:
-                return
+        # Voice search shares this activity-result listener but uses a different request code.
+        if request_code == self._native_picker_request_code + 1:
             try:
-                if request_code == self._native_camera_photo_request_code:
-                    extras = intent.getExtras()
-                    bitmap = extras.get("data") if extras is not None else None
-                    if bitmap is None:
-                        self.message("Photo not returned", "The camera did not return a photo. Try Photo / Video Upload if needed.")
-                        return
-                    path = os.path.join(self.data_dir, "camera_" + str(int(time.time() * 1000)) + ".jpg")
-                    stream = autoclass("java.io.FileOutputStream")(path)
-                    BitmapCompressFormat = autoclass("android.graphics.Bitmap$CompressFormat")
-                    bitmap.compress(BitmapCompressFormat.JPEG, 95, stream)
-                    stream.flush()
-                    stream.close()
-                else:
-                    uri = intent.getData()
-                    if uri is None:
-                        self.message("Video not returned", "The camera did not return a video file.")
-                        return
-                    resolver = self._android_activity.getContentResolver()
-                    mime = resolver.getType(uri) or "video/mp4"
-                    extension = {"video/mp4": ".mp4", "video/3gpp": ".3gp", "video/quicktime": ".mov"}.get(mime, ".mp4")
-                    path = os.path.join(self.data_dir, "camera_" + str(int(time.time() * 1000)) + extension)
-                    stream = resolver.openInputStream(uri)
-                    if stream is None:
-                        raise IOError("Android could not read the recorded video")
-                    output = open(path, "wb")
-                    buffer = jarray.zeros(8192, "b")
-                    try:
-                        while True:
-                            count = stream.read(buffer)
-                            if count == -1:
-                                break
-                            output.write(bytes((int(value) & 255) for value in buffer[:count]))
-                    finally:
-                        stream.close()
-                        output.close()
-                Clock.schedule_once(lambda *_: self.file_selected([path]), 0)
+                if result_code == -1 and intent is not None:
+                    results = intent.getStringArrayListExtra(
+                        autoclass("android.speech.RecognizerIntent").EXTRA_RESULTS)
+                    if results and results.size() > 0:
+                        phrase = str(results.get(0))
+                        self.search_input_field.text = phrase
+                        self.execute_search(phrase)
             except Exception as error:
-                self.message("Camera result failed", "Could not import the camera result. Try Photo / Video Upload instead.\n" + str(error))
+                self.message("Voice Search", "Could not read voice input: " + str(error))
             return
+
         if request_code != self._native_picker_request_code:
             return
         callback = self._native_picker_callback
@@ -1124,44 +1175,74 @@ class HomeScreen(Screen):
         if callback is None:
             return
         if result_code != -1 or intent is None:
-            # Cancelled selection: return without changing or deleting any existing posts.
             return
+
         try:
             uri = intent.getData()
             if uri is None:
-                return
+                raise IOError("Android returned no selected file URI")
+
             resolver = self._android_activity.getContentResolver()
-            name = self._native_uri_name(resolver, uri)
-            extension = os.path.splitext(name)[1].lower()
+            display_name = self._native_uri_name(resolver, uri)
+            mime_type = str(resolver.getType(uri) or "").lower().split(";")[0].strip()
+            extension = os.path.splitext(display_name)[1].lower()
+
+            # Files/Gallery providers sometimes return names without extensions.
+            # Infer the extension from the provider MIME type before file_selected()
+            # validates it against ALL_MEDIA. Otherwise a real JPEG can be rejected as .bin.
+            mime_extensions = {
+                "image/jpeg": ".jpg", "image/jpg": ".jpg", "image/png": ".png",
+                "image/webp": ".webp", "image/gif": ".gif", "image/bmp": ".bmp",
+                "image/heic": ".jpg", "image/heif": ".jpg",
+                "video/mp4": ".mp4", "video/quicktime": ".mov",
+                "video/3gpp": ".3gp", "video/3gpp2": ".3g2",
+                "video/x-matroska": ".mkv", "video/webm": ".webm",
+                "video/x-msvideo": ".avi", "video/x-m4v": ".m4v",
+                "application/pdf": ".pdf", "text/plain": ".txt",
+                "application/msword": ".doc",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+            }
+            if not extension or extension == ".bin":
+                extension = mime_extensions.get(mime_type, "")
             if not extension:
-                mime = resolver.getType(uri) or ""
-                extension = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
-                             "video/mp4": ".mp4", "video/quicktime": ".mov",
-                             "video/3gpp": ".3gp", "application/pdf": ".pdf"}.get(mime, ".bin")
-            destination = os.path.join(self.data_dir, "selected_" + str(int(time.time() * 1000)) + extension)
-            stream = resolver.openInputStream(uri)
-            if stream is None:
-                raise IOError("Android could not open the selected file")
+                # Keep a useful filename but don't silently call an unknown file .bin.
+                extension = ".jpg" if kind in ("photo", "profile_image") else (".mp4" if kind == "video" else ".dat")
+
+            prefix = "profile_image" if kind == "profile_image" else "selected"
+            destination = os.path.join(self.data_dir, prefix + "_" + str(int(time.time() * 1000)) + extension)
+            input_stream = resolver.openInputStream(uri)
+            if input_stream is None:
+                raise IOError("Android could not open the selected file stream")
+
+            # Read the Java stream in chunks and write the bytes to app-private storage.
+            output_stream = autoclass("java.io.FileOutputStream")(destination)
             try:
-                output = autoclass("java.io.ByteArrayOutputStream")()
                 buffer = jarray.zeros(8192, "b")
                 while True:
-                    count = stream.read(buffer)
+                    count = input_stream.read(buffer)
                     if count == -1:
                         break
-                    output.write(buffer, 0, count)
-                data = output.toByteArray()
-                with open(destination, "wb") as output_file:
-                    output_file.write(bytes((int(value) & 255) for value in data))
-                output.close()
+                    if count > 0:
+                        output_stream.write(buffer, 0, count)
+                output_stream.flush()
             finally:
-                stream.close()
+                try:
+                    output_stream.close()
+                finally:
+                    input_stream.close()
+
+            if not os.path.isfile(destination) or os.path.getsize(destination) <= 0:
+                raise IOError("The selected file was empty or Android returned no readable data")
+
             if kind == "profile_image":
                 callback([destination])
+            elif kind == "document":
+                callback([destination], "document")
             else:
-                callback([destination], kind)
-        except Exception:
-            self.message("Selection failed", "Could not read that item. Please choose it again.")
+                # Keep the selected image/video in the existing post pipeline.
+                callback([destination], "media")
+        except Exception as error:
+            self.message("Media selection failed", str(error))
 
     def _native_uri_name(self, resolver, uri):
         try:
@@ -1187,7 +1268,7 @@ class HomeScreen(Screen):
             self.message("Unsupported file", "Choose a valid media file.")
             return
         extension = os.path.splitext(path)[1].lower()
-        # Documents are currently represented as document entries; media uploads remain unchanged.
+        # Documents are represented separately; photo/video selections are normal media posts.
         if kind == "document":
             try:
                 destination = os.path.join(self.data_dir, "document_" + str(int(time.time() * 1000)) + extension)
@@ -1334,14 +1415,22 @@ class HomeScreen(Screen):
                 profile_root.add_widget(bg_img)
             except Exception:
                 pass
-        scroll = ScrollView(do_scroll_x=False, bar_width=dp(2))
+        # ScrollEffect disables the rubber-band/stretch bounce when pulling down.
+        scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, bar_width=dp(2),
+                            effect_cls="ScrollEffect", scroll_type=["content"])
         body = BoxLayout(orientation="vertical", size_hint_y=None,
                          spacing=dp(12), padding=(dp(8), dp(8), dp(8), dp(18)))
         body.bind(minimum_height=body.setter("height"))
-        banner = FloatLayout(size_hint_y=None, height=dp(180))
+        banner = RoundedClip(radius=18, size_hint_y=None, height=dp(180))
+        with banner.canvas.before:
+            Color(*rgba(PANEL))
+            banner._banner_bg = RoundedRectangle(pos=banner.pos, size=banner.size, radius=[dp(18)] * 4)
+        banner.bind(pos=lambda w, v: setattr(banner._banner_bg, "pos", v),
+                    size=lambda w, v: setattr(banner._banner_bg, "size", v))
         if self.banner_picture and os.path.isfile(self.banner_picture):
             try:
-                image = Image(source=self.banner_picture, allow_stretch=True, keep_ratio=False,
+                # Preserve source aspect ratio rather than stretching the banner.
+                image = Image(source=self.banner_picture, allow_stretch=True, keep_ratio=True,
                               size_hint=(1, 1), pos_hint={"x": 0, "y": 0},
                               color=(1, 1, 1, max(0, min(1, self.banner_opacity))))
                 banner.add_widget(image)
@@ -1369,15 +1458,9 @@ class HomeScreen(Screen):
         body.add_widget(header)
         identity = BoxLayout(size_hint_y=None, height=dp(90), spacing=dp(12))
         avatar = FloatLayout(size_hint_x=None, width=dp(80))
-        if self.profile_picture and os.path.isfile(self.profile_picture):
-            avatar.add_widget(Image(source=self.profile_picture,
-                                    allow_stretch=True, keep_ratio=False, size_hint=(None, None),
-                                    size=(dp(70), dp(70)),
-                                    pos_hint={"center_x": .5, "center_y": .5}))
-        else:
-            avatar.add_widget(Label(text=self.profile_name[:1].upper() or "S",
-                                    color=rgba(CYAN), bold=True, font_size="28sp",
-                                    pos_hint={"center_x": .5, "center_y": .5}))
+        circle = self._round_avatar(self.profile_picture, self.profile_name[:1].upper() or "", 70, CYAN)
+        circle.pos_hint = {"center_x": .5, "center_y": .5}
+        avatar.add_widget(circle)
         details = BoxLayout(orientation="vertical", spacing=dp(2))
         details.add_widget(Label(text=self.profile_name, color=rgba(WHITE),
                                  bold=True, font_size="20sp", halign="left"))
@@ -1452,40 +1535,8 @@ class HomeScreen(Screen):
         self.content.add_widget(self.make_post_card(path))
 
     def choose_image(self, callback):
-        if self._android_activity is not None and autoclass:
-            try:
-                Intent = autoclass("android.content.Intent")
-                intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
-                intent.addCategory(Intent.CATEGORY_OPENABLE)
-                intent.setType("image/*")
-                self._native_picker_callback = lambda selection, _kind="profile_image": callback(selection)
-                self._native_picker_kind = "profile_image"
-                self._android_activity.startActivityForResult(intent, self._native_picker_request_code)
-                return
-            except Exception:
-                self._native_picker_callback = None
-        if filechooser:
-            try:
-                filechooser.open_file(on_selection=callback,
-                                      filters=[["Images", "*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp", "*.gif"]])
-                return
-            except Exception:
-                pass
-        popup = Popup(title="Choose image", size_hint=(.96, .88))
-        layout = BoxLayout(orientation="vertical", spacing=dp(6), padding=dp(6))
-        chooser = FileChooserListView(path="/storage/emulated/0",
-                                      filters=["*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp", "*.gif"])
-        layout.add_widget(chooser)
-        row = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(6))
-        cancel = NeonButton(text="Cancel", outline="#343440", color=rgba(WHITE))
-        use = NeonButton(text="Use image", outline=CYAN, color=rgba(CYAN))
-        cancel.bind(on_release=popup.dismiss)
-        use.bind(on_release=lambda *_: (popup.dismiss(), callback(chooser.selection)))
-        row.add_widget(cancel)
-        row.add_widget(use)
-        layout.add_widget(row)
-        popup.content = layout
-        popup.open()
+        """Use the same Android system photo picker for profile, banner, and background images."""
+        self.open_picker("profile_image", callback=callback)
 
     def edit_profile(self):
         layout = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(12))
@@ -1585,6 +1636,15 @@ class HomeScreen(Screen):
         body.bind(minimum_height=body.setter("height"))
         scroll.add_widget(body)
         self.content.add_widget(scroll)
+        account_card = BoxLayout(size_hint_y=None, height=dp(86), spacing=dp(12), padding=(dp(8), dp(6)))
+        account_card.add_widget(self._round_avatar(self.profile_picture, self.profile_name[:1].upper() or "", 62, CYAN))
+        account_info = BoxLayout(orientation="vertical", spacing=dp(2))
+        account_info.add_widget(Label(text=self.profile_name, color=rgba(WHITE), bold=True, font_size="16sp", halign="left", valign="middle"))
+        account_info.add_widget(Label(text="@" + self.username, color=rgba(GREY), font_size="12sp", halign="left", valign="middle"))
+        edit_account = NeonButton(text="Edit", size_hint_x=None, width=dp(68), outline=PURPLE, color=rgba(PURPLE))
+        edit_account.bind(on_release=lambda *_: self.edit_profile())
+        account_card.add_widget(account_info); account_card.add_widget(edit_account)
+        body.add_widget(account_card)
         body.add_widget(Label(text="POST HEADER DISPLAY PREFERENCE", color=rgba(CYAN), bold=True, size_hint_y=None, height=dp(30), halign="left"))
         disp_row = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(8))
         btn_name = NeonButton(text="Use Display Name", fill=CYAN if self.display_mode == "name" else PANEL, outline=CYAN, color=rgba(WHITE if self.display_mode == "name" else GREY))
@@ -1612,32 +1672,12 @@ class HomeScreen(Screen):
         body.add_widget(Label(text="HELP & ABOUT APP", color=rgba(PINK), bold=True, size_hint_y=None, height=dp(30), halign="left"))
         for item_title, desc in [
             ("Help & Support", "FAQs, feedback and technical support."),
-            ("Privacy Policy", "Read the full SAM NG privacy policy."),
-            ("About SAM NG", "SAM NG — local prototype.")
+            ("Privacy Policy", "Data guidelines and local storage policy."),
+            ("About SAM NG", "SAM NG v0.9 — Full Production Code.")
         ]:
             b = NeonButton(text=item_title, size_hint_y=None, height=dp(40), outline="#343440", color=rgba(WHITE))
-            if item_title == "Privacy Policy":
-                b.bind(on_release=lambda *_: self.show_privacy_policy())
-            else:
-                b.bind(on_release=lambda _, t=item_title, d=desc: self.message(t, d))
+            b.bind(on_release=lambda _, t=item_title, d=desc: self.message(t, d))
             body.add_widget(b)
-
-    def show_privacy_policy(self):
-        """Display the complete policy in a scrollable in-app window."""
-        popup = Popup(title="SAM NG Privacy Policy", size_hint=(.94, .88), auto_dismiss=True)
-        outer = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(10))
-        scroll = ScrollView(do_scroll_x=False, bar_width=dp(3))
-        policy_label = Label(text=PRIVACY_POLICY, color=rgba(WHITE), font_size="13sp",
-                             size_hint_y=None, halign="left", valign="top", padding=(dp(6), dp(6)))
-        policy_label.bind(width=lambda w, width: setattr(w, "text_size", (max(1, width - dp(12)), None)))
-        policy_label.bind(texture_size=lambda w, size: setattr(w, "height", size[1] + dp(16)))
-        scroll.add_widget(policy_label)
-        outer.add_widget(scroll)
-        close = NeonButton(text="Close", size_hint_y=None, height=dp(44), outline=CYAN, color=rgba(CYAN))
-        close.bind(on_release=popup.dismiss)
-        outer.add_widget(close)
-        popup.content = outer
-        popup.open()
 
     def handle_logout(self):
         self.is_logged_in = False
@@ -1662,6 +1702,12 @@ class HomeScreen(Screen):
 class SamNgApp(App):
     def build(self):
         self.title = "SAM NG"
+        # Ask Android/Kivy to resize/pan content above the keyboard instead of
+        # leaving login fields or the chat composer underneath it.
+        try:
+            Window.softinput_mode = "below_target"
+        except Exception:
+            pass
         self.is_logged_in = False
         self.username = ""
         Window.clearcolor = rgba(BG)
