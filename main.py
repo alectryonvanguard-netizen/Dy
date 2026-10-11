@@ -25,20 +25,19 @@ from kivy.uix.switch import Switch
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
 from kivy.uix.video import Video
-from kivy.uix.camera import Camera
 from kivy.utils import get_color_from_hex, escape_markup
 
 # ----------------------------------------------------------------------------
 # THINGS YOU CAN CHANGE
 # ----------------------------------------------------------------------------
 APP_NAME = "Sam Ng"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.0.8"
 HOME_HEADLINE = "Sam Ng is for you."      # big line on the empty home screen
 
 TERMS_TEXT = ""      # paste your Terms and Conditions here
 PRIVACY_TEXT = ""    # paste your Privacy Policy here
-HELP_TEXT = ""       # call 0715025894
-ABOUT_TEXT = ""      # visit nyxovarianvexorium249@gmail.com 
+HELP_TEXT = ""       # paste your Help text here
+ABOUT_TEXT = ""      # paste your About text here
 PLACEHOLDER = "[This text has not been added yet.]"
 
 TOP_LOWER = dp(26)       # how far the STEM / Following / For You row is pushed down
@@ -138,7 +137,7 @@ def paint_bg(widget):
 
 
 # ----------------------------------------------------------------------------
-# IMAGE HELPERS
+# IMAGE / VIDEO HELPERS
 # ----------------------------------------------------------------------------
 def load_texture(path):
     if not path or not os.path.isfile(path):
@@ -162,6 +161,30 @@ def cover_region(tex, w, h):
         return tex.get_region((tw - nw) // 2, 0, nw, th)
     nh = max(1, int(tw / target))
     return tex.get_region(0, (th - nh) // 2, tw, nh)
+
+
+def stop_videos(root):
+    """Stop every Video widget inside root (so sound does not keep playing)."""
+    if root is None:
+        return
+    try:
+        for w in list(root.walk(restrict=True)):
+            if isinstance(w, Video):
+                try:
+                    w.state = "stop"
+                    w.unload()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+def make_video(path):
+    """Create a Video widget safely (returns a Label if video is not available)."""
+    try:
+        return Video(source=path, state="play", options={"eos": "loop"}, size_hint=(1, 1))
+    except Exception:
+        return Label(text="Video playback is not available", color=WHITE)
 
 
 def ago(ts):
@@ -379,6 +402,29 @@ class CoverImage(ButtonBehavior, Widget):
                 Rectangle(pos=self.pos, size=self.size)
 
 
+class VideoTile(ButtonBehavior, Widget):
+    """Small dark tile with a play triangle (used for videos in grids)."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.bind(pos=self.redraw, size=self.redraw)
+        self.redraw()
+
+    def redraw(self, *args):
+        self.canvas.clear()
+        w, h = self.size
+        if w <= 0 or h <= 0:
+            return
+        cx = self.x + w / 2.0
+        cy = self.y + h / 2.0
+        s = min(w, h) * 0.16
+        with self.canvas:
+            Color(*T("panel"))
+            Rectangle(pos=self.pos, size=self.size)
+            Color(1, 1, 1, 0.9)
+            Triangle(points=[cx - s * 0.7, cy - s, cx - s * 0.7, cy + s, cx + s * 1.1, cy])
+
+
 class CircleImage(ButtonBehavior, Widget):
     def __init__(self, source="", letter="S", ring=None, **kw):
         super().__init__(**kw)
@@ -514,7 +560,7 @@ class ThemedScreen(Screen):
 
 
 # ----------------------------------------------------------------------------
-# BOOT / SPLASH SCREEN (Logo Only)
+# BOOT / SPLASH SCREEN (logo only)
 # ----------------------------------------------------------------------------
 class SplashScreen(ThemedScreen):
     def __init__(self, **kw):
@@ -525,34 +571,54 @@ class SplashScreen(ThemedScreen):
         root = FloatLayout()
         paint_bg(root)
         self.add_widget(root)
-
-        # Strictly logo.png as requested, no extra boot text or fallback names
-        logo_img = CoverImage(source="logo.png", fallback="bg", mode="contain",
-                              size_hint=(1, 1))
-        root.add_widget(logo_img)
+        # logo.png must sit next to main.py. If it is missing you just see the plain background.
+        root.add_widget(CoverImage(source="logo.png", fallback="bg", mode="contain", size_hint=(1, 1)))
 
 
 # ----------------------------------------------------------------------------
-# CUSTOMIZED CAMERA SCREEN WITH FILTERS & PERMISSIONS
+# CUSTOM CAMERA SCREEN WITH FILTERS
 # ----------------------------------------------------------------------------
 class CustomCameraScreen(ThemedScreen):
     def __init__(self, **kw):
         super().__init__(**kw)
         self.filter_type = "normal"
+        self.cam = None
+        self.cam_error = ""
         self.build_ui()
 
     def on_pre_enter(self, *args):
-        self.acquire_permissions()
-        self.rebuild()
-
-    def acquire_permissions(self):
+        # Ask for permission first; start the camera once the answer is in.
         if ANDROID:
             try:
                 from android.permissions import request_permissions, check_permission
                 if not check_permission("android.permission.CAMERA"):
-                    request_permissions(["android.permission.CAMERA", "android.permission.RECORD_AUDIO"])
+                    request_permissions(["android.permission.CAMERA", "android.permission.RECORD_AUDIO"],
+                                        lambda perms, grants: Clock.schedule_once(lambda dt: self.start_camera(), 0.3))
+                    return
             except Exception:
                 pass
+        self.start_camera()
+
+    def on_leave(self, *args):
+        if self.cam is not None:
+            try:
+                self.cam.play = False
+            except Exception:
+                pass
+
+    def start_camera(self):
+        """Create / resume the camera. Any failure is shown on screen instead of crashing the app."""
+        try:
+            if self.cam is None:
+                from kivy.uix.camera import Camera
+                self.cam = Camera(index=0, resolution=(640, 480), play=True, size_hint=(1, 1))
+            else:
+                self.cam.play = True
+            self.cam_error = ""
+        except Exception as e:
+            self.cam = None
+            self.cam_error = "Camera not available: " + str(e)[:60]
+        self.rebuild()
 
     def build_ui(self):
         app = App.get_running_app()
@@ -560,44 +626,44 @@ class CustomCameraScreen(ThemedScreen):
         paint_bg(root)
         self.add_widget(root)
 
-        # Camera preview widget
-        self.cam = Camera(play=True, resolution=(640, 480), size_hint=(1, 1))
-        root.add_widget(self.cam)
+        if self.cam is not None:
+            root.add_widget(self.cam)
+        else:
+            root.add_widget(Label(text=self.cam_error or "Starting camera...", color=T("sub"),
+                                  font_size=sp(15), size_hint=(None, None), size=(dp(300), dp(60)),
+                                  pos_hint={"center_x": 0.5, "center_y": 0.55}))
 
-        # Filter color overlay layer
+        # coloured filter on top of the preview (follows the screen size)
         self.overlay = Widget(size_hint=(1, 1))
-        self.apply_filter_tint()
+        self.overlay.bind(pos=lambda *_: self.apply_filter_tint(), size=lambda *_: self.apply_filter_tint())
         root.add_widget(self.overlay)
+        self.apply_filter_tint()
 
-        # Top bar back button
         top = BoxLayout(size_hint=(1, None), height=dp(56) + TOP_LOWER, padding=(dp(8), TOP_LOWER, dp(8), 0),
-                        pos_hint={"top": 1})
-        back = Icon("back", size_hint=(None, 1), width=dp(40))
+                        pos_hint={"x": 0, "top": 1})
+        back = Icon("back", color=WHITE, size_hint=(None, 1), width=dp(40))
         back.bind(on_release=lambda *_: app.back())
         top.add_widget(back)
         top.add_widget(LLabel(text="Custom Camera", bold=True, font_size=sp(18), color=WHITE))
         root.add_widget(top)
 
-        # Bottom controls (Filters & Capture shutter)
-        controls = BoxLayout(orientation="vertical", size_hint=(1, None), height=dp(140),
-                             padding=dp(16), spacing=dp(10), pos_hint={"bottom": 0.05})
-        
-        # Filter buttons row
+        controls = BoxLayout(orientation="vertical", size_hint=(1, None), height=dp(140) + NAV_RAISE,
+                             padding=(dp(16), dp(10), dp(16), dp(10) + NAV_RAISE), spacing=dp(10),
+                             pos_hint={"x": 0, "y": 0})
+
         f_row = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(8))
         for f_name in ("Normal", "Cyber Cyan", "Neon Pink", "Monotone"):
-            btn = pill(f_name, active=(self.filter_type.lower() == f_name.lower().replace(" ", "")),
-                       height=dp(38), font_size=sp(13))
+            key = f_name.lower().replace(" ", "")
+            btn = pill(f_name, primary=(self.filter_type == key), height=dp(38), font_size=sp(12))
             btn.bind(on_release=lambda *_, fn=f_name: self.set_filter(fn))
             f_row.add_widget(btn)
         controls.add_widget(f_row)
 
-        # Shutter capture button
-        shutter_box = BoxLayout(size_hint_y=None, height=dp(56), padding=(dp(80), 0))
+        shutter_box = BoxLayout(size_hint_y=None, height=dp(56), padding=(dp(60), 0))
         shutter = pill("Capture Photo", primary=True, height=dp(52))
         shutter.bind(on_release=lambda *_: self.capture_photo())
         shutter_box.add_widget(shutter)
         controls.add_widget(shutter_box)
-
         root.add_widget(controls)
 
     def set_filter(self, name):
@@ -619,16 +685,18 @@ class CustomCameraScreen(ThemedScreen):
 
     def capture_photo(self):
         app = App.get_running_app()
+        if self.cam is None:
+            app.toast("Camera is not running")
+            return
         try:
             folder = os.path.join(app.user_data_dir, "media")
             os.makedirs(folder, exist_ok=True)
-            path = os.path.join(folder, "cam_%d.jpg" % int(time.time() * 1000))
+            path = os.path.join(folder, "cam_%d.png" % int(time.time() * 1000))
             self.cam.export_to_png(path)
-            
-            # Save captured photo as profile avatar
             app.profile()["avatar"] = path
             app.save_state()
             app.toast("Profile photo updated!")
+            app.refresh_all()
             app.back()
         except Exception as e:
             app.toast("Capture error: " + str(e)[:40])
@@ -922,6 +990,7 @@ class FeedPager(FloatLayout):
             return
         self.index = max(0, min(index, len(self.posts) - 1))
         if self.page is not None:
+            stop_videos(self.page)
             self.remove_widget(self.page)
         self.page = self.make_page(self.posts[self.index], self)
         self.add_widget(self.page)
@@ -962,10 +1031,16 @@ class HomeScreen(ThemedScreen):
         self.content = None
         self.ui_hidden = False
         self._last_tap_time = 0
+        self.tabs_box = None
+        self.nav = None
         self.build_ui()
 
     def on_pre_enter(self, *args):
         self.rebuild()
+
+    def on_leave(self, *args):
+        if self.pager is not None:
+            stop_videos(self.pager)
 
     def set_tab(self, key):
         self.tab = key
@@ -1015,24 +1090,23 @@ class HomeScreen(ThemedScreen):
         return list(reversed(out))
 
     def on_touch_down(self, touch):
+        # double tap anywhere hides / shows the top row and the bottom row
         if self.collide_point(*touch.pos):
             now = time.time()
-            if now - self._last_tap_time < 0.35:
-                self.toggle_ui_visibility()
+            if now - self._last_tap_time < 0.3:
                 self._last_tap_time = 0
+                self.toggle_ui_visibility()
                 return True
             self._last_tap_time = now
         return super().on_touch_down(touch)
 
     def toggle_ui_visibility(self):
         self.ui_hidden = not self.ui_hidden
-        target_top_y = 1.2 if self.ui_hidden else 1.0
-        target_nav_y = -1.5 if self.ui_hidden else 0.0
-
-        if hasattr(self, "tabs_box"):
-            Animation(top=target_top_y, duration=0.25).start(self.tabs_box)
-        if hasattr(self, "nav"):
-            Animation(y=target_nav_y, duration=0.25).start(self.nav)
+        for w in (self.tabs_box, self.nav):
+            if w is None:
+                continue
+            Animation(opacity=0 if self.ui_hidden else 1, duration=0.25).start(w)
+            w.disabled = self.ui_hidden
 
     def build_ui(self):
         app = App.get_running_app()
@@ -1047,7 +1121,7 @@ class HomeScreen(ThemedScreen):
         root.add_widget(self.content)
 
         self.tabs_box = BoxLayout(orientation="vertical", size_hint=(1, None), height=self.top_height(),
-                                  pos_hint={"x": 0, "top": 1.2 if self.ui_hidden else 1.0})
+                                  pos_hint={"x": 0, "top": 1})
         if has_posts:
             paint_rgba(self.tabs_box, (0, 0, 0, 0.38))
         self.tabs_box.add_widget(Widget(size_hint_y=None, height=TOP_LOWER))
@@ -1071,13 +1145,21 @@ class HomeScreen(ThemedScreen):
 
         self.nav = BottomNav(active="home", translucent=has_posts)
         self.nav.size_hint = (1, None)
-        self.nav.pos_hint = {"x": 0, "y": -1.5 if self.ui_hidden else 0.0}
+        self.nav.pos_hint = {"x": 0, "y": 0}
         root.add_widget(self.nav)
+
+        if self.ui_hidden:
+            self.tabs_box.opacity = 0
+            self.tabs_box.disabled = True
+            self.nav.opacity = 0
+            self.nav.disabled = True
 
         self.fill_content()
 
     def fill_content(self):
         app = App.get_running_app()
+        if self.pager is not None:
+            stop_videos(self.pager)
         self.content.clear_widgets()
         posts = self.visible_posts()
         self.pager = None
@@ -1111,7 +1193,7 @@ class HomeScreen(ThemedScreen):
         inner.add_widget(Wrap(text=title, font_size=sp(24), color=T("sub"), halign="center"))
         inner.add_widget(Wrap(text=sub, font_size=sp(15), color=T("sub"), halign="center"))
         inner.add_widget(Widget(size_hint_y=None, height=dp(16)))
-        
+
         holder = BoxLayout(size_hint_y=None, height=dp(104))
         create = NeonPill(text="[size=34sp]+[/size]\nCreate a post", markup=True, active=True, fg=T("text"),
                           font_size=sp(16), size_hint=(None, None), size=(dp(210), dp(96)))
@@ -1130,7 +1212,7 @@ class HomeScreen(ThemedScreen):
 
         path = post.get("path", "")
         if post.get("kind") == "video":
-            media = Video(source=path, state="play", options={"eos": "loop"}, size_hint=(1, 1), allow_stretch=True)
+            media = make_video(path)
         else:
             media = CoverImage(source=path, fallback="bg", mode=FEED_MODE, size_hint=(1, 1))
         page.add_widget(media)
@@ -1268,7 +1350,7 @@ class InboxScreen(ThemedScreen):
 
 
 # ----------------------------------------------------------------------------
-# PROFILE (BottomNav Removed & Camera Opens Custom Camera Screen)
+# PROFILE (no bottom row here; photo and pencil open the custom camera)
 # ----------------------------------------------------------------------------
 class ButtonBehaviorWidget(ButtonBehavior, Widget):
     pass
@@ -1315,7 +1397,6 @@ class ProfileScreen(ThemedScreen):
         content.bind(minimum_height=content.setter("height"))
         sv.add_widget(content)
         col.add_widget(sv)
-        # Note: BottomNav removed from profile screen per instructions
 
         header = FloatLayout(size_hint_y=None, height=dp(210))
         banner = CoverImage(source=prof.get("banner", ""), fallback="panel", size_hint=(1, None),
@@ -1326,8 +1407,7 @@ class ProfileScreen(ThemedScreen):
             header.add_widget(Label(text="Tap to add a banner", color=T("sub"), font_size=sp(14),
                                     size_hint=(None, None), size=(dp(200), dp(30)),
                                     pos_hint={"center_x": 0.5, "top": 0.9}))
-        
-        # Avatar press opens the customized camera screen directly
+
         avatar = CircleImage(source=prof.get("avatar", ""), letter=prof.get("name", "S"), ring=T("glow"),
                              size_hint=(None, None), size=(dp(104), dp(104)),
                              pos_hint={"center_x": PROFILE_PHOTO_X, "y": 0.02})
@@ -1388,7 +1468,7 @@ class ProfileScreen(ThemedScreen):
             grid.bind(minimum_height=grid.setter("height"))
             for post in reversed(shown):
                 if post.get("kind") == "video":
-                    tile = Video(source=post.get("path", ""), size_hint_y=None, height=dp(130), allow_stretch=True)
+                    tile = VideoTile(size_hint_y=None, height=dp(130))
                 else:
                     tile = CoverImage(source=post.get("path", ""), size_hint_y=None, height=dp(130))
                 tile.bind(on_release=lambda *_, p=post: app.view_post(p))
@@ -1418,7 +1498,7 @@ class ProfileScreen(ThemedScreen):
         catcher.bind(on_release=lambda *_: self.close_menu())
         layer.add_widget(catcher)
 
-        rows = 7
+        rows = 8
         menu = MenuCard(bg="panel", radius=dp(14), outline=True, orientation="vertical",
                         size_hint=(None, None), size=(dp(260), dp(rows * 48 + 16)), padding=dp(8),
                         pos_hint={"right": 0.97, "top": 0.93})
@@ -1428,6 +1508,7 @@ class ProfileScreen(ThemedScreen):
             b.bind(on_release=lambda *_: (self.close_menu(), action()))
             menu.add_widget(b)
 
+        item("Home", lambda: app.root_go("home"))
         item("Device permissions", app.device_permissions_dialog)
 
         dm = BoxLayout(size_hint_y=None, height=dp(48), padding=(dp(14), 0), spacing=dp(6))
@@ -1654,8 +1735,7 @@ class SamNgApp(App):
         self._photo_uri = None
         sm = ScreenManager(transition=FadeTransition(duration=0.18))
         self.sm = sm
-        
-        # Add screens including custom camera screen & logo-only splash
+
         sm.add_widget(SplashScreen(name="splash"))
         sm.add_widget(CustomCameraScreen(name="custom_camera"))
         sm.add_widget(WelcomeScreen(name="welcome"))
@@ -1672,7 +1752,6 @@ class SamNgApp(App):
         sm.add_widget(InfoScreen("Terms and Privacy Policy", lambda: [("Terms and Conditions", TERMS_TEXT),
                                                                     ("Privacy Policy", PRIVACY_TEXT)], name="legal"))
 
-        # Start on splash screen, then transition automatically after 2 seconds
         sm.current = "splash"
         Clock.schedule_once(self.finish_splash, 2.0)
 
@@ -1765,6 +1844,8 @@ class SamNgApp(App):
 
     def refresh_all(self):
         for screen in self.sm.screens:
+            if screen.name == "custom_camera":
+                continue          # keep the live camera running; it rebuilds itself when you open it
             if hasattr(screen, "rebuild"):
                 screen.rebuild()
 
@@ -1837,7 +1918,7 @@ class SamNgApp(App):
                        overlay_color=(0, 0, 0, 0.7), auto_dismiss=False)
         card = Card(bg="panel", radius=dp(18), outline=True, orientation="vertical", padding=dp(14), spacing=dp(10))
         if kind == "video":
-            card.add_widget(Video(source=path, state="play", options={"eos": "loop"}, size_hint=(1, 1), allow_stretch=True))
+            card.add_widget(make_video(path))
         else:
             card.add_widget(CoverImage(source=path, mode="contain", size_hint=(1, 1)))
         cap_card, cap = field("Write a caption")
@@ -1864,6 +1945,7 @@ class SamNgApp(App):
             home.rebuild()
         post.bind(on_release=do_post)
         cancel.bind(on_release=lambda *_: mv.dismiss())
+        mv.bind(on_dismiss=lambda *_: stop_videos(card))
         row.add_widget(cancel)
         row.add_widget(post)
         card.add_widget(row)
@@ -1881,7 +1963,7 @@ class SamNgApp(App):
         bio_card, bio = field("Bio", text=prof.get("bio", ""))
         card.add_widget(name_card)
         card.add_widget(bio_card)
-        photo = pill("Change profile photo (Custom Camera)", height=dp(48))
+        photo = pill("Change profile photo (camera)", height=dp(48))
         banner = pill("Change banner", height=dp(48))
         photo.bind(on_release=lambda *_: (mv.dismiss(), self.go("custom_camera")))
         banner.bind(on_release=lambda *_: (mv.dismiss(), self.change_banner()))
@@ -1919,8 +2001,7 @@ class SamNgApp(App):
                        overlay_color=(0, 0, 0, 0.75))
         card = Card(bg="panel", radius=dp(18), outline=True, orientation="vertical", padding=dp(12), spacing=dp(10))
         if post.get("kind") == "video":
-            tile = Video(source=post.get("path", ""), state="play", options={"eos": "loop"}, size_hint=(1, 1), allow_stretch=True)
-            card.add_widget(tile)
+            card.add_widget(make_video(post.get("path", "")))
         else:
             card.add_widget(CoverImage(source=post.get("path", ""), mode="contain", size_hint=(1, 1)))
         card.add_widget(Wrap(text=post.get("caption", ""), font_size=sp(15), color=T("text")))
@@ -1945,6 +2026,7 @@ class SamNgApp(App):
             self.refresh_all()
         second.bind(on_release=do_second)
         close.bind(on_release=lambda *_: mv.dismiss())
+        mv.bind(on_dismiss=lambda *_: stop_videos(card))
         row.add_widget(second)
         row.add_widget(close)
         card.add_widget(row)
@@ -1954,24 +2036,11 @@ class SamNgApp(App):
     def play_video(self, path):
         mv = ModalView(size_hint=(1, 1), background="", background_color=(0, 0, 0, 1), auto_dismiss=False)
         box = FloatLayout()
-        player = None
-        try:
-            player = Video(source=path, state="play", options={"eos": "loop"}, allow_stretch=True)
-            box.add_widget(player)
-        except Exception:
-            box.add_widget(Label(text="Video playback is not available", color=WHITE))
+        box.add_widget(make_video(path))
         close = NeonPill(text="Close", active=True, font_size=sp(16), size_hint=(None, None),
                          size=(dp(110), dp(46)), pos_hint={"right": 0.96, "top": 0.97})
-
-        def do_close(*_):
-            try:
-                if player is not None:
-                    player.state = "stop"
-                    player.unload()
-            except Exception:
-                pass
-            mv.dismiss()
-        close.bind(on_release=do_close)
+        close.bind(on_release=lambda *_: mv.dismiss())
+        mv.bind(on_dismiss=lambda *_: stop_videos(box))
         box.add_widget(close)
         mv.add_widget(box)
         mv.open()
