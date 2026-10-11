@@ -14,6 +14,11 @@ requirements = python3,kivy,plyer,pyjnius,requests
 
 orientation = portrait
 fullscreen = 0
+# (str) Presplash of the application
+presplash.filename = %(source.dir)s/logo.png
+
+# (string) Presplash background color
+android.presplash_color = black
 
 # App Icon
 icon.filename = %(source.dir)s/icon.png
