@@ -9,6 +9,9 @@ Other:  Friends (follow people), Inbox (notifications), Profile, three-dot setti
 """
 
 import os
+import os
+os.environ['KIVY_VIDEO'] = 'ffpyplayer'
+
 import json
 import time
 import copy
