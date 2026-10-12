@@ -1,4 +1,4 @@
-# SAM NG — Kivy main.py
+# pik D main.py
 # Production release with Boot/Welcome screen, Auth/Login screen, continuous scrolling & 7-day trash bin.
 # Minimal repair: preserve the supplied app structure and UI; fix login/signup state and data saving.
 
@@ -49,7 +49,7 @@ except Exception:
     autoclass = None
     jarray = None
 
-APP_NAME = "SAM NG"
+APP_NAME = "pik D"
 BG = "#000000"
 PANEL = "#141424"
 WHITE = "#FFFFFF"
@@ -189,7 +189,7 @@ class BootScreen(Screen):
                          pos_hint={"center_x": .5, "center_y": .61})
             root.add_widget(logo)
         else:
-            root.add_widget(Label(text="[b]SAM NG[/b]", markup=True, color=rgba(CYAN),
+            root.add_widget(Label(text="[b]pik D[/b]", markup=True, color=rgba(CYAN),
                                   font_size="46sp", size_hint=(1, .3),
                                   pos_hint={"center_x": .5, "center_y": .61}))
 
@@ -227,7 +227,7 @@ class AuthScreen(Screen):
         box = BoxLayout(orientation="vertical", spacing=dp(14), size_hint=(0.85, None), height=dp(360),
                         pos_hint={"center_x": .5, "center_y": .5})
 
-        box.add_widget(Label(text="Welcome to SAM NG", color=rgba(CYAN), font_size="22sp", bold=True, size_hint_y=None, height=dp(36)))
+        box.add_widget(Label(text="Welcome to pik D", color=rgba(CYAN), font_size="22sp", bold=True, size_hint_y=None, height=dp(36)))
         box.add_widget(Label(text="Log in or create an account to start sharing.", color=rgba(GREY), font_size="13sp", size_hint_y=None, height=dp(24)))
 
         self.user_input = RoundedInput(hint_text="Username or Email", multiline=False, size_hint_y=None, height=dp(48))
@@ -287,7 +287,7 @@ class AuthScreen(Screen):
                 with open(home.account_lock_file, "r", encoding="utf-8") as f:
                     locked = json.load(f).get("username", "")
                 if locked and clean_username.casefold() != locked.casefold():
-                    home.message("One account on this device", f"This SAM NG installation is locked to @{locked}. Log in with that account instead.")
+                    home.message("One account on this device", f"This pik D installation is locked to @{locked}. Log in with that account instead.")
                     return False
             else:
                 os.makedirs(home.data_dir, exist_ok=True)
@@ -356,13 +356,13 @@ class HomeScreen(Screen):
         self.comments = {}
         self.saved = set()
         self.liked = set()
-        self.search_history = ["samng trends", "tutorial video", "kivy design"]
-        self.secret_codes = {"*#7266#": "SAM NG Engine v0.8", "*#0007#": "Debug Overlay Activated"}
+        self.search_history = ["pik D trends", "tutorial video", "kivy design"]
+        self.secret_codes = {"*#7266#": "pik D Engine v0.8", "*#0007#": "Debug Overlay Activated"}
         self.active_page = "Home"
         self.inbox_return_page = "Home"
         self.active_tab = "For You"
         self.profile_tab = "Posts"
-        self.profile_name = "Sam Ng"
+        self.profile_name = "pik D"
         self.username = app.username or "samng"
         self.bio = "Creator"
         self.profile_picture = ""
@@ -664,7 +664,7 @@ class HomeScreen(Screen):
         stack.add_widget(Label(text="[b]Search History & Suggestions[/b]", markup=True, color=rgba(CYAN), size_hint_y=None, height=dp(30), halign="left"))
         filtered = [s for s in self.search_history if not query or query.lower() in s.lower()]
         if not filtered:
-            filtered = ["samng community", "trending videos", "creator tips"]
+            filtered = ["pik D community", "trending videos", "creator tips"]
         for item in filtered:
             b = NeonButton(text=item, size_hint_y=None, height=dp(42), outline="#343440", color=rgba(WHITE), radius=12)
             b.bind(on_release=lambda _, q=item: self.execute_search(q))
@@ -1078,7 +1078,7 @@ class HomeScreen(Screen):
             panel._sheet_bg = RoundedRectangle(pos=panel.pos, size=panel.size, radius=[dp(22), dp(22), 0, 0])
         panel.bind(pos=lambda widget, value: setattr(widget._sheet_bg, "pos", value),
                    size=lambda widget, value: setattr(widget._sheet_bg, "size", value))
-        heading = Label(text="Add to SAM NG", color=rgba(WHITE), bold=True,
+        heading = Label(text="Add to pik D", color=rgba(WHITE), bold=True,
                         font_size="17sp", size_hint_y=None, height=dp(28), halign="left")
         heading.bind(size=lambda widget, value: setattr(widget, "text_size", value))
         panel.add_widget(heading)
@@ -1302,7 +1302,7 @@ class HomeScreen(Screen):
                 banner.add_widget(image)
             except Exception:
                 pass
-        banner.add_widget(Label(text="[b]SAM NG[/b]", markup=True,
+        banner.add_widget(Label(text="[b]pik D[/b]", markup=True,
                                 color=rgba(WHITE), font_size="20sp",
                                 pos_hint={"center_x": .5, "center_y": .55}))
         body.add_widget(banner)
@@ -1537,7 +1537,7 @@ class HomeScreen(Screen):
         for item_title, desc in [
             ("Help & Support", "FAQs, feedback and technical support."),
             ("Privacy Policy", "Data guidelines and local storage policy."),
-            ("About SAM NG", "SAM NG v0.9 — Full Production Code.")
+            ("About pik D", "pik D v0.9 — Full Production Code.")
         ]:
             b = NeonButton(text=item_title, size_hint_y=None, height=dp(40), outline="#343440", color=rgba(WHITE))
             b.bind(on_release=lambda _, t=item_title, d=desc: self.message(t, d))
@@ -1565,7 +1565,7 @@ class HomeScreen(Screen):
 
 class SamNgApp(App):
     def build(self):
-        self.title = "SAM NG"
+        self.title = "pik D"
         try:
             Window.softinput_mode = "below_target"
         except Exception:
