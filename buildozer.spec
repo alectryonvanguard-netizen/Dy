@@ -1,5 +1,5 @@
 [app]
-title = Sam Ng
+title = pik D
 package.name = samng
 package.domain = com.samng
 
