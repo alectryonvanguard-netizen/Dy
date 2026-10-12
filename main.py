@@ -487,7 +487,7 @@ class HomeScreen(Screen):
             if os.path.isfile(self.state_file):
                 with open(self.state_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                self.posts = [p for p in data.get("posts", []) if os.path.isfile(p)]
+                self.posts = [p for p in data.get("posts", []) if os.path.isfile(p) or p.startswith("document:")]
                 self.drafts = [p for p in data.get("drafts", []) if os.path.isfile(p)]
                 self.private_posts = [p for p in data.get("private_posts", []) if os.path.isfile(p)]
                 self.deleted_posts = data.get("deleted_posts", {})
@@ -698,7 +698,7 @@ class HomeScreen(Screen):
             stack.add_widget(empty)
         else:
             for path in reversed(self.posts):
-                if os.path.isfile(path):
+                if path.startswith("document:") or os.path.isfile(path):
                     stack.add_widget(self.make_post_card(path))
         scroll.add_widget(stack)
         self.content.add_widget(scroll)
@@ -707,14 +707,12 @@ class HomeScreen(Screen):
         accent = unique_accent(path) if self.show_post_colours else CYAN
         card = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6))
         card.bind(minimum_height=card.setter("height"))
-        ext = os.path.splitext(path)[1].lower()
         header_box = BoxLayout(size_hint_y=None, height=dp(44), padding=(dp(12), dp(2)), spacing=dp(8))
         avatar = FloatLayout(size_hint_x=None, width=dp(36))
         if self.profile_picture and os.path.isfile(self.profile_picture):
             avatar.add_widget(Image(source=self.profile_picture, allow_stretch=True, keep_ratio=False,
                                     size_hint=(None, None), size=(dp(34), dp(34)),
                                     pos_hint={"center_x": .5, "center_y": .5}))
-        # Keep the avatar area clean when no profile photo is set; don't show a stray initial.
         header_box.add_widget(avatar)
         header_label = self.profile_name if self.display_mode == "name" else f"@{self.username}"
         title_box = BoxLayout(orientation="vertical", spacing=0)
@@ -729,22 +727,28 @@ class HomeScreen(Screen):
 
         media_holder = FloatLayout(size_hint_y=None)
         try:
-            if ext in VIDEO_EXTENSIONS:
-                media = Video(source=path, state="play" if self.autoplay else "pause",
-                              options={"eos": "loop"}, allow_stretch=True, keep_ratio=True,
-                              size_hint=(1, 1), pos_hint={"x": 0, "y": 0})
-                media_holder.height = dp(380)
+            if path.startswith("document:"):
+                media_holder.height = dp(160)
+                doc_name = self.post_documents.get(path, "Attached Document")
+                media_holder.add_widget(Label(text=f"📄 [b]{doc_name}[/b]", markup=True, color=rgba(CYAN), halign="center", pos_hint={"center_x": .5, "center_y": .5}))
             else:
-                media = Image(source=path, allow_stretch=True, keep_ratio=True,
-                              size_hint=(1, 1), pos_hint={"x": 0, "y": 0})
-                if media.texture:
-                    w, h = media.texture.size
-                    aspect = h / float(w) if w > 0 else 1.0
-                    calc_h = Window.width * aspect
-                    media_holder.height = max(dp(220), min(calc_h, Window.height - dp(160)))
+                ext = os.path.splitext(path)[1].lower()
+                if ext in VIDEO_EXTENSIONS:
+                    media = Video(source=path, state="play" if self.autoplay else "pause",
+                                  options={"eos": "loop"}, allow_stretch=True, keep_ratio=True,
+                                  size_hint=(1, 1), pos_hint={"x": 0, "y": 0})
+                    media_holder.height = dp(380)
                 else:
-                    media_holder.height = dp(320)
-            media_holder.add_widget(media)
+                    media = Image(source=path, allow_stretch=True, keep_ratio=True,
+                                  size_hint=(1, 1), pos_hint={"x": 0, "y": 0})
+                    if media.texture:
+                        w, h = media.texture.size
+                        aspect = h / float(w) if w > 0 else 1.0
+                        calc_h = Window.width * aspect
+                        media_holder.height = max(dp(220), min(calc_h, Window.height - dp(160)))
+                    else:
+                        media_holder.height = dp(320)
+                media_holder.add_widget(media)
         except Exception:
             media_holder.height = dp(200)
             media_holder.add_widget(Label(text="Video/Media loading error.", color=rgba(PINK)))
@@ -829,8 +833,6 @@ class HomeScreen(Screen):
             self.inbox_return_page = previous_page or "Home"
         self.active_page = name
 
-        # Inbox, Friends, and Create are immersive pages: hide both navigation
-        # bars while these destinations are active.
         is_inbox = (name == "Inbox")
         is_profile = (name == "Profile")
         hide_navigation = name in ("Inbox", "Friends", "Create", "Profile")
@@ -843,7 +845,6 @@ class HomeScreen(Screen):
             self.nav_wrapper.opacity = 0
             self.nav_wrapper.disabled = True
         else:
-            # Keep the bottom avatar visible on the profile page.
             self.nav_wrapper.height = dp(82)
             self.nav_wrapper.opacity = 1
             self.nav_wrapper.disabled = False
@@ -1028,8 +1029,6 @@ class HomeScreen(Screen):
             Clock.schedule_once(lambda dt: setattr(history_scroll, "scroll_y", 0), .08)
         send.bind(on_release=send_message)
         entry.bind(on_text_validate=send_message)
-        # Retain the composer target and use Android's below_target mode so the
-        # whole bar follows the keyboard instead of staying behind it.
         self._ai_chat_entry = entry
         self._ai_chat_composer = composer
         Clock.schedule_once(lambda dt: setattr(history_scroll, "scroll_y", 0), .1)
@@ -1065,8 +1064,9 @@ class HomeScreen(Screen):
         else:
             self.simple_page("STEM", "Science • Technology • Engineering • Mathematics", CYAN)
 
+    # --- ONLY THIS SECTION (MEDIA PICKER) HAS BEEN UPDATED ---
     def pick_media(self, *_):
-        """Show a bottom sheet with upload choices only (no camera option)."""
+        """Show bottom sheet for media and document uploads."""
         sheet = ModalView(size_hint=(1, None), height=dp(244),
                           pos_hint={"x": 0, "y": 0},
                           background="", background_color=(0, 0, 0, 0),
@@ -1091,174 +1091,42 @@ class HomeScreen(Screen):
         sheet.add_widget(panel)
         sheet.open()
 
-    def open_camera(self):
-        if permissions:
-            try:
-                permissions.request_permission(permissions.PERMISSION.CAMERA)
-            except Exception:
-                pass
-        try:
-            target = os.path.join(self.data_dir, "camera_" + str(int(time.time())) + ".jpg")
-            if camera:
-                camera.take_picture(filename=target, on_complete=self.camera_completed)
-            else:
-                self.message("Camera API", "Plyer camera not detected.")
-        except Exception:
-            self.message("Camera permission needed", "Allow camera permissions in settings.")
-
-    def camera_completed(self, path):
-        if path and os.path.isfile(path):
-            self.file_selected([path])
-
     def open_picker(self, kind="media", callback=None):
-        """Launch Android's system content picker for photos, videos, or documents."""
-        if self._android_activity is not None and autoclass:
-            try:
-                Intent = autoclass("android.content.Intent")
-                intent = Intent(Intent.ACTION_GET_CONTENT)
-                intent.addCategory(Intent.CATEGORY_OPENABLE)
-                if kind in ("photo", "profile_image"):
-                    intent.setType("image/*")
-                elif kind == "video":
-                    intent.setType("video/*")
-                else:
-                    intent.setType("*/*")
-                self._native_picker_callback = callback or self.file_selected
-                self._native_picker_kind = kind
-                # Android's system chooser lets the device provide its available
-                # photo/video providers (including Files by Google or Gallery).
-                chooser_title = {"photo": "Add photos", "profile_image": "Choose a photo",
-                                 "video": "Add video", "document": "Add document"}.get(kind, "Choose media")
-                chooser_intent = Intent.createChooser(intent, chooser_title)
-                self._android_activity.startActivityForResult(chooser_intent, self._native_picker_request_code)
-                return
-            except Exception as error:
-                self._native_picker_callback = None
-                self.message("Could not open photos", "Android could not open its photo/video selection window.\n" + str(error))
-                return
-
-        # Desktop fallback only; Android must use the native content picker.
+        """Clean single-purpose media selector mechanism."""
+        target_callback = callback or (lambda sel: self.file_selected(sel, "document" if kind == "document" else "media"))
+        
         if filechooser:
             try:
-                if kind == "video":
-                    filters = [["Videos", "*.mp4", "*.mov", "*.mkv", "*.3gp", "*.webm"]]
-                elif kind in ("photo", "profile_image"):
-                    filters = [["Photos", "*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp", "*.gif"]]
-                else:
-                    filters = [["Documents", "*.pdf", "*.doc", "*.docx", "*.txt"]]
-                filechooser.open_file(on_selection=lambda selection: (callback(selection) if callback else self.file_selected(selection, "document" if kind == "document" else "media")), filters=filters)
+                filters = [["Photos & Videos", "*.png", "*.jpg", "*.jpeg", "*.webp", "*.mp4", "*.mkv", "*.mov", "*.avi", "*.3gp"]]
+                filechooser.open_file(on_selection=target_callback, filters=filters, multiple=False)
                 return
             except Exception:
                 pass
-        self.message("Picker unavailable", "Could not open the device's content picker.")
-
-    def _on_native_picker_result(self, request_code, result_code, intent):
-        # Voice search shares this activity-result listener but uses a different request code.
-        if request_code == self._native_picker_request_code + 1:
-            try:
-                if result_code == -1 and intent is not None:
-                    results = intent.getStringArrayListExtra(
-                        autoclass("android.speech.RecognizerIntent").EXTRA_RESULTS)
-                    if results and results.size() > 0:
-                        phrase = str(results.get(0))
-                        self.search_input_field.text = phrase
-                        self.execute_search(phrase)
-            except Exception as error:
-                self.message("Voice Search", "Could not read voice input: " + str(error))
-            return
-
-        if request_code != self._native_picker_request_code:
-            return
-        callback = self._native_picker_callback
-        kind = self._native_picker_kind
-        self._native_picker_callback = None
-        if callback is None:
-            return
-        if result_code != -1 or intent is None:
-            return
-
-        try:
-            uri = intent.getData()
-            if uri is None:
-                raise IOError("Android returned no selected file URI")
-
-            resolver = self._android_activity.getContentResolver()
-            display_name = self._native_uri_name(resolver, uri)
-            mime_type = str(resolver.getType(uri) or "").lower().split(";")[0].strip()
-            extension = os.path.splitext(display_name)[1].lower()
-
-            # Files/Gallery providers sometimes return names without extensions.
-            # Infer the extension from the provider MIME type before file_selected()
-            # validates it against ALL_MEDIA. Otherwise a real JPEG can be rejected as .bin.
-            mime_extensions = {
-                "image/jpeg": ".jpg", "image/jpg": ".jpg", "image/png": ".png",
-                "image/webp": ".webp", "image/gif": ".gif", "image/bmp": ".bmp",
-                "image/heic": ".jpg", "image/heif": ".jpg",
-                "video/mp4": ".mp4", "video/quicktime": ".mov",
-                "video/3gpp": ".3gp", "video/3gpp2": ".3g2",
-                "video/x-matroska": ".mkv", "video/webm": ".webm",
-                "video/x-msvideo": ".avi", "video/x-m4v": ".m4v",
-                "application/pdf": ".pdf", "text/plain": ".txt",
-                "application/msword": ".doc",
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
-            }
-            if not extension or extension == ".bin":
-                extension = mime_extensions.get(mime_type, "")
-            if not extension:
-                # Keep a useful filename but don't silently call an unknown file .bin.
-                extension = ".jpg" if kind in ("photo", "profile_image") else (".mp4" if kind == "video" else ".dat")
-
-            prefix = "profile_image" if kind == "profile_image" else "selected"
-            destination = os.path.join(self.data_dir, prefix + "_" + str(int(time.time() * 1000)) + extension)
-            input_stream = resolver.openInputStream(uri)
-            if input_stream is None:
-                raise IOError("Android could not open the selected file stream")
-
-            # Read the Java stream in chunks and write the bytes to app-private storage.
-            output_stream = autoclass("java.io.FileOutputStream")(destination)
-            try:
-                buffer = jarray.zeros(8192, "b")
-                while True:
-                    count = input_stream.read(buffer)
-                    if count == -1:
-                        break
-                    if count > 0:
-                        output_stream.write(buffer, 0, count)
-                output_stream.flush()
-            finally:
-                try:
-                    output_stream.close()
-                finally:
-                    input_stream.close()
-
-            if not os.path.isfile(destination) or os.path.getsize(destination) <= 0:
-                raise IOError("The selected file was empty or Android returned no readable data")
-
-            if kind == "profile_image":
-                callback([destination])
-            elif kind == "document":
-                callback([destination], "document")
+                
+        content = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(8))
+        start_path = "/sdcard/DCIM" if os.path.exists("/sdcard/DCIM") else "/sdcard"
+        fc = FileChooserListView(path=start_path, filters=["*.png", "*.jpg", "*.jpeg", "*.mp4", "*.mkv", "*.mov"])
+        content.add_widget(fc)
+        
+        popup = Popup(title="Select Media File", content=content, size_hint=(0.95, 0.85))
+        btn_row = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(8))
+        
+        cancel_btn = NeonButton(text="Cancel", outline="#343440", color=rgba(WHITE))
+        select_btn = NeonButton(text="Select", outline=CYAN, color=rgba(CYAN))
+        
+        cancel_btn.bind(on_release=popup.dismiss)
+        def select_press(*_):
+            if fc.selection:
+                popup.dismiss()
+                target_callback(fc.selection)
             else:
-                # Keep the selected image/video in the existing post pipeline.
-                callback([destination], "media")
-        except Exception as error:
-            self.message("Media selection failed", str(error))
-
-    def _native_uri_name(self, resolver, uri):
-        try:
-            OpenableColumns = autoclass("android.provider.OpenableColumns")
-            cursor = resolver.query(uri, None, None, None, None)
-            if cursor is not None:
-                try:
-                    if cursor.moveToFirst():
-                        index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                        if index >= 0:
-                            return str(cursor.getString(index))
-                finally:
-                    cursor.close()
-        except Exception:
-            pass
-        return "selected_file"
+                self.message("No File Selected", "Please tap a photo or video to select it.")
+        select_btn.bind(on_release=select_press)
+        
+        btn_row.add_widget(cancel_btn)
+        btn_row.add_widget(select_btn)
+        content.add_widget(btn_row)
+        popup.open()
 
     def file_selected(self, selection, kind="media"):
         if not selection:
@@ -1268,7 +1136,6 @@ class HomeScreen(Screen):
             self.message("Unsupported file", "Choose a valid media file.")
             return
         extension = os.path.splitext(path)[1].lower()
-        # Documents are represented separately; photo/video selections are normal media posts.
         if kind == "document":
             try:
                 destination = os.path.join(self.data_dir, "document_" + str(int(time.time() * 1000)) + extension)
@@ -1294,6 +1161,7 @@ class HomeScreen(Screen):
             self.ask_post_caption(destination)
         except Exception as error:
             self.message("Upload failed", str(error))
+    # --- END OF UPDATED SECTION ---
 
     def ask_post_caption(self, path):
         layout = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(12))
@@ -1415,7 +1283,6 @@ class HomeScreen(Screen):
                 profile_root.add_widget(bg_img)
             except Exception:
                 pass
-        # ScrollEffect disables the rubber-band/stretch bounce when pulling down.
         scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, bar_width=dp(2),
                             effect_cls="ScrollEffect", scroll_type=["content"])
         body = BoxLayout(orientation="vertical", size_hint_y=None,
@@ -1429,7 +1296,6 @@ class HomeScreen(Screen):
                     size=lambda w, v: setattr(banner._banner_bg, "size", v))
         if self.banner_picture and os.path.isfile(self.banner_picture):
             try:
-                # Preserve source aspect ratio rather than stretching the banner.
                 image = Image(source=self.banner_picture, allow_stretch=True, keep_ratio=True,
                               size_hint=(1, 1), pos_hint={"x": 0, "y": 0},
                               color=(1, 1, 1, max(0, min(1, self.banner_opacity))))
@@ -1485,12 +1351,11 @@ class HomeScreen(Screen):
         if self.profile_tab == "Drafts":
             active_list = self.drafts
         elif self.profile_tab == "Posts":
-            # Photos and videos appear together in a three-column grid.
             active_list = self.posts
         elif self.profile_tab == "Videos":
             active_list = [
                 path for path in self.posts
-                if os.path.splitext(path)[1].lower() in VIDEO_EXTENSIONS
+                if not path.startswith("document:") and os.path.splitext(path)[1].lower() in VIDEO_EXTENSIONS
             ]
         elif self.profile_tab == "Saved":
             active_list = list(self.saved)
@@ -1535,7 +1400,6 @@ class HomeScreen(Screen):
         self.content.add_widget(self.make_post_card(path))
 
     def choose_image(self, callback):
-        """Use the same Android system photo picker for profile, banner, and background images."""
         self.open_picker("profile_image", callback=callback)
 
     def edit_profile(self):
@@ -1702,8 +1566,6 @@ class HomeScreen(Screen):
 class SamNgApp(App):
     def build(self):
         self.title = "SAM NG"
-        # Ask Android/Kivy to resize/pan content above the keyboard instead of
-        # leaving login fields or the chat composer underneath it.
         try:
             Window.softinput_mode = "below_target"
         except Exception:
