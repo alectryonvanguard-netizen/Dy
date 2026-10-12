@@ -1,5 +1,5 @@
 
-name: Build Sam Ng APK
+name: Build pik D APK
 
 on:
   workflow_dispatch:
@@ -73,7 +73,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: Sam-Ng-APK
+          name: pik-D-APK
           path: bin/*.apk
           if-no-files-found: error
           retention-days: 7
