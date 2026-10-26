@@ -1,0 +1,121 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101827">
+  <meta name="description" content="OLYNTAQ Business Manager — manage your business and discover products in one place.">
+  <title>OLYNTAQ — Business Manager</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#home" aria-label="OLYNTAQ home">
+      <span class="brand-mark">O</span>
+      <span>OLYNTAQ<small>BUSINESS MANAGER</small></span>
+    </a>
+    <button id="menuToggle" class="icon-button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+    <nav id="mainNav" class="nav">
+      <a href="#home" class="nav-link active">Home</a>
+      <a href="#marketplace" class="nav-link">Marketplace</a>
+      <a href="#dashboard" class="nav-link">My Business</a>
+      <button id="installButton" class="button button-outline hidden">Install app</button>
+      <a class="button button-primary" href="#account">Sign in</a>
+    </nav>
+  </header>
+
+  <main>
+    <section id="home" class="hero section">
+      <div class="hero-copy">
+        <span class="eyebrow"><span class="status-dot"></span> ONE PLATFORM. MORE POSSIBILITIES.</span>
+        <h1>Your business.<br><span>Your next level.</span></h1>
+        <p>Manage your products, stock, sales and customers. Discover a marketplace built to bring businesses and buyers together.</p>
+        <div class="hero-actions">
+          <a href="#dashboard" class="button button-primary button-large">Manage my business <span>→</span></a>
+          <a href="#marketplace" class="button button-ghost button-large">Explore marketplace</a>
+        </div>
+        <div class="trust-line"><span>●</span> Business tools and marketplace in one place</div>
+      </div>
+      <div class="hero-art" aria-label="Illustration of business analytics">
+        <div class="orbit orbit-one"></div>
+        <div class="orbit orbit-two"></div>
+        <div class="dashboard-preview">
+          <div class="preview-top"><span>BUSINESS OVERVIEW</span><span class="live-dot">● LIVE</span></div>
+          <div class="preview-label">Your business at a glance</div>
+          <div class="preview-number">Grow with clarity<span>↗</span></div>
+          <div class="chart">
+            <i style="height:32%"></i><i style="height:49%"></i>
+            <i style="height:39%"></i><i style="height:64%"></i>
+            <i style="height:54%"></i><i style="height:83%"></i>
+            <i style="height:70%"></i><i style="height:100%"></i>
+          </div>
+          <div class="preview-bottom"><span>Products</span><span>Sales</span><span>Customers</span></div>
+        </div>
+        <div class="floating-chip chip-top">✦ Built for growth</div>
+        <div class="floating-chip chip-bottom"><span class="chip-icon">↗</span> One place to manage more</div>
+      </div>
+    </section>
+
+    <section class="feature-strip">
+      <div><span class="feature-icon">▦</span><span><b>Business management</b><small>Keep your operations organized</small></span></div>
+      <div><span class="feature-icon">◇</span><span><b>Public marketplace</b><small>Help buyers discover products</small></span></div>
+      <div><span class="feature-icon">↗</span><span><b>Made for mobile</b><small>Use it on your phone or computer</small></span></div>
+    </section>
+
+    <section id="marketplace" class="section content-section">
+      <div class="section-heading">
+        <div><span class="eyebrow">DISCOVER SOMETHING NEW</span><h2>Explore the marketplace</h2><p>Find products from businesses in one convenient place.</p></div>
+        <span class="coming-tag">MARKETPLACE PREVIEW</span>
+      </div>
+      <div class="market-search">
+        <span>⌕</span>
+        <input id="marketSearch" type="search" placeholder="Search products or categories..." aria-label="Search marketplace">
+        <button id="searchButton" class="button button-primary">Search</button>
+      </div>
+      <div id="marketMessage" class="market-message">
+        <div class="empty-symbol">◇</div>
+        <h3>Your marketplace starts here</h3>
+        <p>Product listings will appear here once the public marketplace and seller listings are connected.</p>
+      </div>
+    </section>
+
+    <section id="dashboard" class="section business-section">
+      <div class="section-heading">
+        <div><span class="eyebrow">YOUR BUSINESS, ORGANIZED</span><h2>Everything in one workspace</h2><p>Tools for the everyday work of running your business.</p></div>
+      </div>
+      <div class="tool-grid">
+        <article class="tool-card"><span class="tool-icon cyan">▦</span><h3>Products & stock</h3><p>Organize products, prices and inventory.</p><span class="tool-foot">Inventory management ↗</span></article>
+        <article class="tool-card"><span class="tool-icon purple">♙</span><h3>Customers</h3><p>Keep customer details and business relationships together.</p><span class="tool-foot">Customer records ↗</span></article>
+        <article class="tool-card"><span class="tool-icon orange">↗</span><h3>Sales & receipts</h3><p>Record sales and keep track of transactions.</p><span class="tool-foot">Sales management ↗</span></article>
+        <article class="tool-card"><span class="tool-icon green">▤</span><h3>Expenses</h3><p>Organize expenses and understand business costs.</p><span class="tool-foot">Expense tracking ↗</span></article>
+      </div>
+      <div class="workspace-cta">
+        <div><span class="eyebrow">YOUR WORKSPACE</span><h3>Ready to manage your business?</h3><p>Sign in or create an account to get started when authentication is connected.</p></div>
+        <a href="#account" class="button button-primary">Get started <span>→</span></a>
+      </div>
+    </section>
+
+    <section id="account" class="section account-section">
+      <div class="account-card">
+        <div class="account-mark">O</div>
+        <span class="eyebrow">WELCOME TO OLYNTAQ</span>
+        <h2>Your business journey starts here.</h2>
+        <p>Account registration and sign-in will be connected securely to Supabase in the next development stage.</p>
+        <button id="accountInfoButton" class="button button-primary button-large">Continue to account setup</button>
+        <p id="accountMessage" class="account-message" role="status"></p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <a class="brand footer-brand" href="#home"><span class="brand-mark">O</span><span>OLYNTAQ<small>BUSINESS MANAGER</small></span></a>
+    <p>One platform for business and discovery.</p>
+    <span>© <span id="year"></span> OLYNTAQ</span>
+  </footer>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
